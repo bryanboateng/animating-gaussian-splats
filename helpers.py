@@ -10,10 +10,20 @@ def setup_camera(w, h, k, w2c, near=0.01, far=100):
     w2c = torch.tensor(w2c).cuda().float()
     cam_center = torch.inverse(w2c)[:3, 3]
     w2c = w2c.unsqueeze(0).transpose(1, 2)
-    opengl_proj = torch.tensor([[2 * fx / w, 0.0, -(w - 2 * cx) / w, 0.0],
-                                [0.0, 2 * fy / h, -(h - 2 * cy) / h, 0.0],
-                                [0.0, 0.0, far / (far - near), -(far * near) / (far - near)],
-                                [0.0, 0.0, 1.0, 0.0]]).cuda().float().unsqueeze(0).transpose(1, 2)
+    opengl_proj = (
+        torch.tensor(
+            [
+                [2 * fx / w, 0.0, -(w - 2 * cx) / w, 0.0],
+                [0.0, 2 * fy / h, -(h - 2 * cy) / h, 0.0],
+                [0.0, 0.0, far / (far - near), -(far * near) / (far - near)],
+                [0.0, 0.0, 1.0, 0.0],
+            ]
+        )
+        .cuda()
+        .float()
+        .unsqueeze(0)
+        .transpose(1, 2)
+    )
     full_proj = w2c.bmm(opengl_proj)
     cam = Camera(
         image_height=h,
@@ -26,19 +36,22 @@ def setup_camera(w, h, k, w2c, near=0.01, far=100):
         projmatrix=full_proj,
         sh_degree=0,
         campos=cam_center,
-        prefiltered=False
+        prefiltered=False,
     )
     return cam
 
 
 def params2rendervar(params):
     rendervar = {
-        'means3D': params['means3D'],
-        'colors_precomp': params['rgb_colors'],
-        'rotations': torch.nn.functional.normalize(params['unnorm_rotations']),
-        'opacities': torch.sigmoid(params['logit_opacities']),
-        'scales': torch.exp(params['log_scales']),
-        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0
+        "means3D": params["means3D"],
+        "colors_precomp": params["rgb_colors"],
+        "rotations": torch.nn.functional.normalize(params["unnorm_rotations"]),
+        "opacities": torch.sigmoid(params["logit_opacities"]),
+        "scales": torch.exp(params["log_scales"]),
+        "means2D": torch.zeros_like(
+            params["means3D"], requires_grad=True, device="cuda"
+        )
+        + 0,
     }
     return rendervar
 
@@ -86,8 +99,11 @@ def params2cpu(params, is_initial_timestep):
     if is_initial_timestep:
         res = {k: v.detach().cpu().contiguous().numpy() for k, v in params.items()}
     else:
-        res = {k: v.detach().cpu().contiguous().numpy() for k, v in params.items() if
-               k in ['means3D', 'rgb_colors', 'unnorm_rotations']}
+        res = {
+            k: v.detach().cpu().contiguous().numpy()
+            for k, v in params.items()
+            if k in ["means3D", "rgb_colors", "unnorm_rotations"]
+        }
     return res
 
 
