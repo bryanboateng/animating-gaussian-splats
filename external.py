@@ -20,6 +20,8 @@ import torch.nn.functional as func
 from torch.autograd import Variable
 from math import exp
 
+from helpers import Variables
+
 
 def build_rotation(q):
     norm = torch.sqrt(
@@ -116,12 +118,11 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
         return ssim_map.mean(1).mean(1).mean(1)
 
 
-def accumulate_mean2d_gradient(variables):
-    variables["means2D_gradient_accum"][variables["seen"]] += torch.norm(
-        variables["means2D"].grad[variables["seen"], :2], dim=-1
+def accumulate_mean2d_gradient(variables: Variables):
+    variables.external_means2D_gradient_accum[variables.external_seen] += torch.norm(
+        variables.external_means2D.grad[variables.external_seen, :2], dim=-1
     )
-    variables["denom"][variables["seen"]] += 1
-    return variables
+    variables.external_denom[variables.external_seen] += 1
 
 
 def update_params_and_optimizer(new_params, params, optimizer):
@@ -136,7 +137,6 @@ def update_params_and_optimizer(new_params, params, optimizer):
         group["params"][0] = torch.nn.Parameter(v.requires_grad_(True))
         optimizer.state[group["params"][0]] = stored_state
         params[k] = group["params"][0]
-    return params
 
 
 def cat_params_to_optimizer(new_params, params, optimizer):
@@ -161,10 +161,9 @@ def cat_params_to_optimizer(new_params, params, optimizer):
                 torch.cat((group["params"][0], v), dim=0).requires_grad_(True)
             )
             params[k] = group["params"][0]
-    return params
 
 
-def remove_points(to_remove, params, variables, optimizer):
+def remove_points(to_remove, params, variables: Variables, optimizer: torch.optim.Adam):
     to_keep = ~to_remove
     keys = [k for k in params.keys() if k not in ["cam_m", "cam_c"]]
     for k in keys:
@@ -184,34 +183,35 @@ def remove_points(to_remove, params, variables, optimizer):
                 group["params"][0][to_keep].requires_grad_(True)
             )
             params[k] = group["params"][0]
-    variables["means2D_gradient_accum"] = variables["means2D_gradient_accum"][to_keep]
-    variables["denom"] = variables["denom"][to_keep]
-    variables["max_2D_radius"] = variables["max_2D_radius"][to_keep]
-    return params, variables
+    variables.external_means2D_gradient_accum = (
+        variables.external_means2D_gradient_accum[to_keep]
+    )
+    variables.external_denom = variables.external_denom[to_keep]
+    variables.external_max_2D_radius = variables.external_max_2D_radius[to_keep]
 
 
 def inverse_sigmoid(x):
     return torch.log(x / (1 - x))
 
 
-def densify(params, variables, optimizer, i):
+def densify_gaussians(params, variables: Variables, optimizer, i):
     if i <= 5000:
-        variables = accumulate_mean2d_gradient(variables)
+        accumulate_mean2d_gradient(variables)
         grad_thresh = 0.0002
         if (i >= 500) and (i % 100 == 0):
-            grads = variables["means2D_gradient_accum"] / variables["denom"]
+            grads = variables.external_means2D_gradient_accum / variables.external_denom
             grads[grads.isnan()] = 0.0
             to_clone = torch.logical_and(
                 grads >= grad_thresh,
                 (
                     torch.max(torch.exp(params["log_scales"]), dim=1).values
-                    <= 0.01 * variables["scene_radius"]
+                    <= 0.01 * variables.external_scene_radius
                 ),
             )
             new_params = {
                 k: v[to_clone] for k, v in params.items() if k not in ["cam_m", "cam_c"]
             }
-            params = cat_params_to_optimizer(new_params, params, optimizer)
+            cat_params_to_optimizer(new_params, params, optimizer)
             num_pts = params["means3D"].shape[0]
 
             padded_grad = torch.zeros(num_pts, device="cuda")
@@ -219,7 +219,7 @@ def densify(params, variables, optimizer, i):
             to_split = torch.logical_and(
                 padded_grad >= grad_thresh,
                 torch.max(torch.exp(params["log_scales"]), dim=1).values
-                > 0.01 * variables["scene_radius"],
+                > 0.01 * variables.external_scene_radius,
             )
             n = 2  # number to split into
             new_params = {
@@ -235,19 +235,21 @@ def densify(params, variables, optimizer, i):
             new_params["log_scales"] = torch.log(
                 torch.exp(new_params["log_scales"]) / (0.8 * n)
             )
-            params = cat_params_to_optimizer(new_params, params, optimizer)
+            cat_params_to_optimizer(new_params, params, optimizer)
             num_pts = params["means3D"].shape[0]
 
-            variables["means2D_gradient_accum"] = torch.zeros(num_pts, device="cuda")
-            variables["denom"] = torch.zeros(num_pts, device="cuda")
-            variables["max_2D_radius"] = torch.zeros(num_pts, device="cuda")
+            variables.external_means2D_gradient_accum = torch.zeros(
+                num_pts, device="cuda"
+            )
+            variables.external_denom = torch.zeros(num_pts, device="cuda")
+            variables.external_max_2D_radius = torch.zeros(num_pts, device="cuda")
             to_remove = torch.cat(
                 (
                     to_split,
                     torch.zeros(n * to_split.sum(), dtype=torch.bool, device="cuda"),
                 )
             )
-            params, variables = remove_points(to_remove, params, variables, optimizer)
+            remove_points(to_remove, params, variables, optimizer)
 
             remove_threshold = 0.25 if i == 5000 else 0.005
             to_remove = (
@@ -256,10 +258,10 @@ def densify(params, variables, optimizer, i):
             if i >= 3000:
                 big_points_ws = (
                     torch.exp(params["log_scales"]).max(dim=1).values
-                    > 0.1 * variables["scene_radius"]
+                    > 0.1 * variables.external_scene_radius
                 )
                 to_remove = torch.logical_or(to_remove, big_points_ws)
-            params, variables = remove_points(to_remove, params, variables, optimizer)
+            remove_points(to_remove, params, variables, optimizer)
 
             torch.cuda.empty_cache()
 
@@ -269,6 +271,4 @@ def densify(params, variables, optimizer, i):
                     torch.ones_like(params["logit_opacities"]) * 0.01
                 )
             }
-            params = update_params_and_optimizer(new_params, params, optimizer)
-
-    return params, variables
+            update_params_and_optimizer(new_params, params, optimizer)

@@ -1,0 +1,10 @@
+imageio
+numpy
+open3d
+Pillow
+setuptools
+torch
+torchaudio
+torchvision
+tqdm
+-e diff-gaussian-rasterization-w-depth
