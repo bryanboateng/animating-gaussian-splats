@@ -1,3 +1,5 @@
+import math
+
 import torch
 from typing import Optional
 import numpy as np
@@ -121,14 +123,15 @@ class Camera:
         height: float,
         aspect_ratio: float,
     ):
+        yaw_radians = yaw * math.pi / 180
         extrinsic_matrix = np.array(
             [
-                [np.cos(yaw), 0.0, -np.sin(yaw), 0.0],
+                [np.cos(yaw_radians), 0.0, -np.sin(yaw_radians), 0.0],
                 [0.0, 1.0, 0.0, height],
                 [
-                    np.sin(yaw),
+                    np.sin(yaw_radians),
                     0.0,
-                    np.cos(yaw),
+                    np.cos(yaw_radians),
                     distance_to_center,
                 ],
                 [0.0, 0.0, 0.0, 1.0],

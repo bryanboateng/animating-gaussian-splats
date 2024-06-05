@@ -22,12 +22,12 @@ class Configuration:
         self.experiment_id = "foo"
         self.sequence_name = "basketball"
         self.render_fps = 30
+        self.render_degrees_per_second = 30
 
         self.image_width = 640
         self.image_height = 360
         self.near_clipping_plane_distance = 0.01
         self.far_clipping_plane_distance = 100
-        self.yaw = 0.0
         self.distance_to_center = 2.4
         self.height = 1.3
         self.aspect_ratio = 0.82
@@ -111,7 +111,18 @@ def load_gaussian_sequence():
     return processed_gaussian_sequence
 
 
-def render_gaussians(gaussians):
+def render_gaussians(gaussians, yaw: float):
+    camera = Camera.from_parameters(
+        id_=0,
+        image_width=config.image_width,
+        image_height=config.image_height,
+        near_clipping_plane_distance=config.near_clipping_plane_distance,
+        far_clipping_plane_distance=config.far_clipping_plane_distance,
+        yaw=yaw,
+        distance_to_center=config.distance_to_center,
+        height=config.height,
+        aspect_ratio=config.aspect_ratio,
+    )
     with torch.no_grad():
         (
             image,
@@ -127,14 +138,16 @@ def render_sequence():
     gaussian_sequence = load_gaussian_sequence()
     render_images = []
     start_time = time.time()
+    yaw = 0
     for gaussians in tqdm(gaussian_sequence, desc="Rendering progress"):
         render_images.append(
-            (255 * np.clip(render_gaussians(gaussians).cpu().numpy(), 0, 1))
+            (255 * np.clip(render_gaussians(gaussians, yaw).cpu().numpy(), 0, 1))
             .astype(np.uint8)
             .transpose(1, 2, 0)
         )
+        yaw += config.render_degrees_per_second / config.render_fps
     finish_time = time.time()
-    print("FPS:", (len(gaussian_sequence) - 1) / (finish_time - start_time))
+    print("Possible FPS:", (len(gaussian_sequence) - 1) / (finish_time - start_time))
 
     rendered_sequence_path = os.path.join(
         config.rendered_sequence_directory_path,
@@ -157,17 +170,5 @@ if __name__ == "__main__":
         config.update_from_json(arguments.config_json)
     else:
         config.update_from_arguments(arguments)
-
-    camera = Camera.from_parameters(
-        id_=0,
-        image_width=config.image_width,
-        image_height=config.image_height,
-        near_clipping_plane_distance=config.near_clipping_plane_distance,
-        far_clipping_plane_distance=config.far_clipping_plane_distance,
-        yaw=config.yaw,
-        distance_to_center=config.distance_to_center,
-        height=config.height,
-        aspect_ratio=config.aspect_ratio,
-    )
 
     render_sequence()

@@ -106,7 +106,7 @@ python visualize_2d.py \
   --sequence_name basketball \
   --image_width 1280 \
   --image_height 720 \
-  --yaw 90
+  --render_degrees_per_second 90
 ```
 
 To see all available options, run:
