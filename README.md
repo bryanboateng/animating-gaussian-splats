@@ -48,9 +48,9 @@ Example:
 
 ```bash
 python train.py \
- --data_directory_path /content/drive/MyDrive/4d-gaussians/input-data/ \
+ /content/drive/MyDrive/4d-gaussians/input-data/ \
+ basketball \
  --output_directory_path /content/drive/MyDrive/4d-gaussians/output-parameters/ \
- --sequence_name basketball
 ```
 
 To see all available options, run:
@@ -100,10 +100,10 @@ Example:
 
 ```bash
 python visualizations/generate_cloud_video.py \
-  --parameters_directory_path /path/to/output-parameters/ \
+  /path/to/output-parameters/ \
+  foo \
+  basketball \
   --rendered_sequence_directory_path /path/to/renders/ \
-  --experiment_id foo \
-  --sequence_name basketball \
   --image_width 1280 \
   --image_height 720 \
   --render_degrees_per_second 90
