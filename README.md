@@ -7,7 +7,7 @@ you can use the provided Google Colab notebooks.
 These notebooks allow you to execute the code without setting up a local environment.
 
 - Training: [![Open Training Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/training.ipynb)
-- 2D visualization: [![Open Visualization Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/visualize_2d.ipynb)
+- Cloud Video Generation: [![Open Visualization Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/generate_cloud_video.ipynb)
 
 ## Prerequisites
 
@@ -59,21 +59,21 @@ To see all available options, run:
 python train.py -h
 ```
 
-### 3D Visualization Script
+### Interactive Cloud Viewer Script
 
-This script visualizes the training data in 3D using Open3D.
+This script visualizes the training data interactively using Open3D.
 Note that this script may not work in all environments (e.g., Google Colab).
 
-To run the 3D visualization script:
+To run the Interactive Cloud Viewer script:
 
 ```bash
-python visualize_3d.py [options]
+python visualizations/view_clouds_interactively.py [options]
 ```
 
 Example:
 
 ```bash
-python visualize_3d.py \
+python visualizations/view_clouds_interactively.py \
   --parameters_directory_path /path/to/output-parameters/ \
   --experiment_id foo \
   --sequence_name basketball \
@@ -82,24 +82,24 @@ python visualize_3d.py \
 To see all available options, run:
 
 ```bash
-python visualize_3d.py -h
+python visualizations/view_clouds_interactively.py -h
 ```
 
-### 2D Visualization Script
+### Cloud Video Generator Script
 
-If the 3D visualization script is not supported in your environment,
-you can use the 2D visualization script, which renders the data as a video.
+If the Interactive Cloud Viewer script is not supported in your environment,
+you can use the Cloud Video Generator script, which renders the data as a video.
 
-To run the 2D visualization script:
+To run the Cloud Video Generator script:
 
 ```bash
-python visualize_2d.py [options]
+python visualizations/generate_cloud_video.py [options]
 ```
 
 Example:
 
 ```bash
-python visualize_2d.py \
+python visualizations/generate_cloud_video.py \
   --parameters_directory_path /path/to/output-parameters/ \
   --rendered_sequence_directory_path /path/to/renders/ \
   --experiment_id foo \
@@ -112,5 +112,5 @@ python visualize_2d.py \
 To see all available options, run:
 
 ```bash
-python visualize_2d.py -h
+python visualizations/generate_cloud_video.py -h
 ```
