@@ -7,4 +7,5 @@ torch
 torchaudio
 torchvision
 tqdm
+wandb
 -e diff-gaussian-rasterization-w-depth

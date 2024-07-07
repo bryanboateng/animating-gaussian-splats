@@ -6,8 +6,11 @@ For a quick and easy way to test and run the scripts,
 you can use the provided Google Colab notebooks.
 These notebooks allow you to execute the code without setting up a local environment.
 
-- Training: [![Open Training Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/training.ipynb)
-- Generate Cloud Video: [![Open "Generate Cloud Video" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/generate_cloud_video.ipynb)
+| Notebook Name | Google Colab Link |
+| -------------- | --------------- |
+| Train Per Timestamp | [![Open "Train Per Timestamp" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/train_per_timestamp.ipynb) |
+| Train Deformation Network | [![Open "Train Deformation Network" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/train_deformation_network.ipynb) |
+| Generate Cloud Video | [![Open "Generate Cloud Video" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/generate_cloud_video.ipynb)|
 
 ## Prerequisites
 
@@ -34,29 +37,56 @@ To run the scripts locally, ensure you have the following prerequisites:
 
 ## Scripts
 
-### Training Script
+### Training Scripts
 
-The training script is used to train the model and save the parameters.
+#### "Train Per Timestamp" Script
 
-To run the training script:
+The "Train Per Timestamp" script is used to train the model by optimizing the Gaussian clouds for each timestamp.
+
+To run the "Train Per Timestamp" script:
 
 ```bash
-python train.py [options]
+python train_per_timestamp.py sequence_name data_directory_path [options]
 ```
 
 Example:
 
 ```bash
-python train.py \
- /content/drive/MyDrive/4d-gaussians/input-data/ \
+python train_per_timestamp.py \
  basketball \
- --output_directory_path /content/drive/MyDrive/4d-gaussians/output-parameters/ \
+ /content/drive/MyDrive/4d-gaussians/input-data/ \
+ --output_directory_path /content/drive/MyDrive/4d-gaussians/output-parameters/
 ```
 
-To see all available options, run:
+To see all available arguments and options, run:
 
 ```bash
-python train.py -h
+python train_per_timestamp.py -h
+```
+
+#### "Train Deformation Network" Script
+
+The "Train Deformation Network" script is used to train the model by learning the deformation between timestamps.
+
+To run the "Train Deformation Network" script:
+
+```bash
+python train_deformation_network.py sequence_name data_directory_path [options]
+```
+
+Example:
+
+```bash
+python train_deformation_network.py \
+ basketball \
+ /content/drive/MyDrive/4d-gaussians/input-data/ \
+ --learning_rate 0.01
+```
+
+To see all available arguments and options, run:
+
+```bash
+python train_deformation_network.py -h
 ```
 
 ### Visualization Scripts

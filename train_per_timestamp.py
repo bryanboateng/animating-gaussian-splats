@@ -1,14 +1,11 @@
-import copy
 import json
 import os
 from dataclasses import dataclass, MISSING
 from datetime import datetime
-from random import randint
 
 import numpy as np
 import open3d as o3d
 import torch
-from PIL import Image
 from tqdm import tqdm
 
 import external
@@ -20,25 +17,16 @@ from helpers import (
     weighted_l2_loss_v1,
     weighted_l2_loss_v2,
     quat_mult,
-    Camera,
     GaussianCloudParameterNames,
     Variables,
 )
-
-
-class Capture:
-    def __init__(
-        self, camera: Camera, image: torch.Tensor, segmentation_mask: torch.Tensor
-    ):
-        self.camera = camera
-        self.image = image
-        self.segmentation_mask = segmentation_mask
+from training_commons import Capture, load_timestep_captures, get_random_element
 
 
 @dataclass
 class Trainer(Command):
-    data_directory_path: str = MISSING
     sequence_name: str = MISSING
+    data_directory_path: str = MISSING
     output_directory_path: str = "./output/"
     experiment_id: str = datetime.utcnow().isoformat() + "Z"
 
@@ -138,12 +126,6 @@ class Trainer(Command):
         external.update_params_and_optimizer(
             updated_parameters, gaussian_cloud_parameters, optimizer
         )
-
-    @staticmethod
-    def _get_random_element(input_list, fallback_list):
-        if not input_list:
-            input_list = fallback_list.copy()
-        return input_list.pop(randint(0, len(input_list) - 1))
 
     @staticmethod
     def _create_gaussian_cloud(parameters: dict[str, torch.nn.Parameter]):
@@ -528,70 +510,6 @@ class Trainer(Command):
             .float(),
         )
 
-    def _load_timestep_captures(self, dataset_metadata, timestamp: int):
-        timestep_data = []
-        for camera_index in range(len(dataset_metadata["fn"][timestamp])):
-            filename = dataset_metadata["fn"][timestamp][camera_index]
-            segmentation_mask = (
-                torch.tensor(
-                    np.array(
-                        copy.deepcopy(
-                            Image.open(
-                                os.path.join(
-                                    self.data_directory_path,
-                                    self.sequence_name,
-                                    "seg",
-                                    filename.replace(".jpg", ".png"),
-                                )
-                            )
-                        )
-                    ).astype(np.float32)
-                )
-                .float()
-                .cuda()
-            )
-            timestep_data.append(
-                Capture(
-                    camera=Camera(
-                        id_=camera_index,
-                        image_width=dataset_metadata["w"],
-                        image_height=dataset_metadata["h"],
-                        near_clipping_plane_distance=1,
-                        far_clipping_plane_distance=100,
-                        intrinsic_matrix=dataset_metadata["k"][timestamp][camera_index],
-                        extrinsic_matrix=dataset_metadata["w2c"][timestamp][
-                            camera_index
-                        ],
-                    ),
-                    image=torch.tensor(
-                        np.array(
-                            copy.deepcopy(
-                                Image.open(
-                                    os.path.join(
-                                        self.data_directory_path,
-                                        self.sequence_name,
-                                        "ims",
-                                        filename,
-                                    )
-                                )
-                            )
-                        )
-                    )
-                    .float()
-                    .cuda()
-                    .permute(2, 0, 1)
-                    / 255,
-                    segmentation_mask=torch.stack(
-                        (
-                            segmentation_mask,
-                            torch.zeros_like(segmentation_mask),
-                            1 - segmentation_mask,
-                        )
-                    ),
-                )
-            )
-        return timestep_data
-
     def _save_sequence(self, gaussian_cloud_parameters_sequence):
         to_save = {}
         for k in gaussian_cloud_parameters_sequence[0].keys():
@@ -633,7 +551,9 @@ class Trainer(Command):
         )
         gaussian_cloud_parameters_sequence = []
         for timestep in range(len(dataset_metadata["fn"])):
-            timestep_captures = self._load_timestep_captures(dataset_metadata, timestep)
+            timestep_captures = load_timestep_captures(
+                dataset_metadata, timestep, self.data_directory_path, self.sequence_name
+            )
             timestep_capture_buffer = []
             is_initial_timestep = timestep == 0
             if not is_initial_timestep:
@@ -643,7 +563,7 @@ class Trainer(Command):
             iteration_range = range(10000 if is_initial_timestep else 2000)
             progress_bar = tqdm(iteration_range, desc=f"timestep {timestep}")
             for i in iteration_range:
-                capture = self._get_random_element(
+                capture = get_random_element(
                     input_list=timestep_capture_buffer, fallback_list=timestep_captures
                 )
                 loss = self._calculate_loss(
