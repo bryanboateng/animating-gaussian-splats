@@ -20,7 +20,7 @@ from helpers import (
     GaussianCloudParameterNames,
     Variables,
 )
-from commons import Capture, load_timestep_captures, get_random_element
+from training_commons import Capture, load_timestep_captures, get_random_element
 
 
 @dataclass

@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from command import Command
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
-from commons import load_timestep_captures, get_random_element, Capture
+from training_commons import load_timestep_captures, get_random_element, Capture
 
 
 class DeformationNetwork(nn.Module):
