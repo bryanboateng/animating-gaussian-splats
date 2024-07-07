@@ -18,10 +18,10 @@ from helpers import (
 
 @dataclass
 class CloudVideoGenerator(Command):
-    parameters_directory_path: str = MISSING
-    rendered_sequence_directory_path = "./renders/"
     experiment_id: str = MISSING
     sequence_name: str = MISSING
+    parameters_directory_path: str = MISSING
+    rendered_sequence_directory_path = "./renders/"
     render_fps = 30
     render_degrees_per_second = 30
 

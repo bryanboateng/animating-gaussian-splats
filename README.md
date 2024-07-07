@@ -7,7 +7,7 @@ you can use the provided Google Colab notebooks.
 These notebooks allow you to execute the code without setting up a local environment.
 
 - Training: [![Open Training Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/training.ipynb)
-- Cloud Video Generation: [![Open Visualization Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/generate_cloud_video.ipynb)
+- Generate Cloud Video: [![Open "Generate Cloud Video" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/generate_cloud_video.ipynb)
 
 ## Prerequisites
 
@@ -59,58 +59,61 @@ To see all available options, run:
 python train.py -h
 ```
 
-### Interactive Cloud Viewer Script
+### Visualization Scripts
+
+#### "View Clouds Interactively" Script
 
 This script visualizes the training data interactively using Open3D.
-Note that this script may not work in all environments (e.g., Google Colab).
+> [!NOTE]
+> This script may not work in all environments (e.g., Google Colab).
 
-To run the Interactive Cloud Viewer script:
+To run the "View Clouds Interactively" script:
 
 ```bash
-python visualizations/view_clouds_interactively.py [options]
+python visualization_scripts/view_clouds_interactively.py [options]
 ```
 
 Example:
 
 ```bash
-python visualizations/view_clouds_interactively.py \
+python visualization_scripts/view_clouds_interactively.py \
   --parameters_directory_path /path/to/output-parameters/ \
   --experiment_id foo \
   --sequence_name basketball \
 ```
 
-To see all available options, run:
+To see all available arguments and options, run:
 
 ```bash
-python visualizations/view_clouds_interactively.py -h
+python visualization_scripts/view_clouds_interactively.py -h
 ```
 
-### Cloud Video Generator Script
+#### "Generate Cloud Video" Script
 
-If the Interactive Cloud Viewer script is not supported in your environment,
-you can use the Cloud Video Generator script, which renders the data as a video.
+If the "View Clouds Interactively" script is not supported in your environment,
+you can use the "Generate Cloud Video" script, which renders the data as a video.
 
-To run the Cloud Video Generator script:
+To run the "Generate Cloud Video" script:
 
 ```bash
-python visualizations/generate_cloud_video.py [options]
+python visualization_scripts/generate_cloud_video.py experiment_id sequence_name parameters_directory_path [options]
 ```
 
 Example:
 
 ```bash
-python visualizations/generate_cloud_video.py \
-  /path/to/output-parameters/ \
+python visualization_scripts/generate_cloud_video.py \
   foo \
   basketball \
+  /path/to/output-parameters/ \
   --rendered_sequence_directory_path /path/to/renders/ \
   --image_width 1280 \
   --image_height 720 \
   --render_degrees_per_second 90
 ```
 
-To see all available options, run:
+To see all available arguments and options, run:
 
 ```bash
-python visualizations/generate_cloud_video.py -h
+python visualization_scripts/generate_cloud_video.py -h
 ```
