@@ -2,6 +2,7 @@ import json
 import os
 from dataclasses import dataclass, MISSING
 from datetime import datetime
+from typing import Optional
 
 import numpy as np
 import open3d as o3d
@@ -20,7 +21,7 @@ from helpers import (
     GaussianCloudParameterNames,
     Variables,
 )
-from training_commons import Capture, load_timestep_captures, get_random_element
+from training_commons import Capture, load_timestep_captures, get_random_element, get_timestep_count
 
 
 @dataclass
@@ -29,6 +30,7 @@ class Trainer(Command):
     data_directory_path: str = MISSING
     output_directory_path: str = "./output/"
     experiment_id: str = datetime.utcnow().isoformat() + "Z"
+    timestep_count_limit: Optional[int] = None
 
     @staticmethod
     def _compute_knn_indices_and_squared_distances(
@@ -550,7 +552,8 @@ class Trainer(Command):
             gaussian_cloud_parameters, variables.external_scene_radius
         )
         gaussian_cloud_parameters_sequence = []
-        for timestep in range(len(dataset_metadata["fn"])):
+        timestep_count = get_timestep_count(self.timestep_count_limit, dataset_metadata)
+        for timestep in range(timestep_count):
             timestep_captures = load_timestep_captures(
                 dataset_metadata, timestep, self.data_directory_path, self.sequence_name
             )

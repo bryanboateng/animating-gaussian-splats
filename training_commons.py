@@ -18,6 +18,14 @@ class Capture:
         self.segmentation_mask = segmentation_mask
 
 
+def get_timestep_count(timestep_count_limit, dataset_metadata):
+    sequence_length = len(dataset_metadata["fn"])
+    if timestep_count_limit is None:
+        return sequence_length
+    else:
+        return min(sequence_length, timestep_count_limit)
+
+
 def load_timestep_captures(
     dataset_metadata, timestamp: int, data_directory_path: str, sequence_name: str
 ):

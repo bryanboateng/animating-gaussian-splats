@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, MISSING
 from datetime import datetime
 from random import randint
+from typing import Optional
 
 import torch
 import wandb
@@ -12,7 +13,12 @@ from tqdm import tqdm
 
 from command import Command
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
-from training_commons import load_timestep_captures, get_random_element, Capture
+from training_commons import (
+    load_timestep_captures,
+    get_random_element,
+    Capture,
+    get_timestep_count,
+)
 
 
 class DeformationNetwork(nn.Module):
@@ -51,6 +57,7 @@ class TrainDeformationNetwork(Command):
     data_directory_path: str = MISSING
     experiment_id: str = datetime.utcnow().isoformat() + "Z"
     learning_rate = 0.01
+    timestep_count_limit: Optional[int] = None
 
     @staticmethod
     def _load_and_freeze_parameters(path: str):
@@ -112,13 +119,13 @@ class TrainDeformationNetwork(Command):
 
     def _train_in_sequential_order(
         self,
-        sequence_length,
+        timestep_count,
         dataset_metadata,
         deformation_network,
         parameters,
         optimizer,
     ):
-        for timestep in range(sequence_length):
+        for timestep in range(timestep_count):
             timestep_capture_list = load_timestep_captures(
                 dataset_metadata, timestep, self.data_directory_path, self.sequence_name
             )
@@ -156,14 +163,14 @@ class TrainDeformationNetwork(Command):
 
     def _train_in_random_order(
         self,
-        sequence_length,
+        timestep_count,
         dataset_metadata,
         deformation_network,
         parameters,
         optimizer,
     ):
         list_of_timestep_capture_lists = []
-        for timestep in range(sequence_length):
+        for timestep in range(timestep_count):
             list_of_timestep_capture_lists += [
                 load_timestep_captures(
                     dataset_metadata,
@@ -206,6 +213,7 @@ class TrainDeformationNetwork(Command):
         self._save_and_log_checkpoint(deformation_network)
 
     def run(self):
+        self._set_absolute_paths()
         wandb.init(project="new-dynamic-gaussians")
         dataset_metadata = json.load(
             open(
@@ -217,7 +225,10 @@ class TrainDeformationNetwork(Command):
                 "r",
             )
         )
-        sequence_length = len(dataset_metadata["fn"])
+        timestep_count = get_timestep_count(self.timestep_count_limit, dataset_metadata)
+        deformation_network = DeformationNetwork(7, timestep_count).cuda()
+        optimizer = torch.optim.Adam(params=deformation_network.parameters(), lr=1e-3)
+
         parameters = self._load_and_freeze_parameters(
             os.path.join(
                 self.data_directory_path,
@@ -225,11 +236,8 @@ class TrainDeformationNetwork(Command):
                 "params.pth",
             )
         )
-        deformation_network = DeformationNetwork(7, sequence_length).cuda()
-        optimizer = torch.optim.Adam(params=deformation_network.parameters(), lr=1e-3)
-
         self._train_in_sequential_order(
-            sequence_length,
+            timestep_count,
             dataset_metadata,
             deformation_network,
             parameters,
@@ -237,7 +245,7 @@ class TrainDeformationNetwork(Command):
         )
 
         self._train_in_random_order(
-            sequence_length,
+            timestep_count,
             dataset_metadata,
             deformation_network,
             parameters,
