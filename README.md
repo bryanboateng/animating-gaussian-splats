@@ -46,13 +46,13 @@ The "Train Per Timestamp" script is used to train the model by optimizing the Ga
 To run the "Train Per Timestamp" script:
 
 ```bash
-python train_per_timestamp.py sequence_name data_directory_path [options]
+python training_scripts/train_per_timestamp.py sequence_name data_directory_path [options]
 ```
 
 Example:
 
 ```bash
-python train_per_timestamp.py \
+python training_scripts/train_per_timestamp.py \
  basketball \
  /content/drive/MyDrive/4d-gaussians/input-data/ \
  --output_directory_path /content/drive/MyDrive/4d-gaussians/output-parameters/
@@ -61,7 +61,7 @@ python train_per_timestamp.py \
 To see all available arguments and options, run:
 
 ```bash
-python train_per_timestamp.py -h
+python training_scripts/train_per_timestamp.py -h
 ```
 
 #### "Train Deformation Network" Script
@@ -71,13 +71,13 @@ The "Train Deformation Network" script is used to train the model by learning th
 To run the "Train Deformation Network" script:
 
 ```bash
-python train_deformation_network.py sequence_name data_directory_path [options]
+python training_scripts/train_deformation_network.py sequence_name data_directory_path [options]
 ```
 
 Example:
 
 ```bash
-python train_deformation_network.py \
+python training_scripts/train_deformation_network.py \
  basketball \
  /content/drive/MyDrive/4d-gaussians/input-data/ \
  --learning_rate 0.01
@@ -86,7 +86,7 @@ python train_deformation_network.py \
 To see all available arguments and options, run:
 
 ```bash
-python train_deformation_network.py -h
+python training_scripts/train_deformation_network.py -h
 ```
 
 ### Visualization Scripts
