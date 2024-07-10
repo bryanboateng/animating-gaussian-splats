@@ -10,12 +10,12 @@ class DeformationNetwork(nn.Module):
         super(DeformationNetwork, self).__init__()
         self.embedding_dimension = 2
         self.embedding = nn.Embedding(sequence_length, self.embedding_dimension)
-        self.fc1 = nn.Linear(input_size + self.embedding_dimension, 64)
-        self.fc2 = nn.Linear(64, 128)
-        self.fc3 = nn.Linear(128, 256)
-        self.fc4 = nn.Linear(256, 128)
-        self.fc5 = nn.Linear(128, 64)
-        self.fc6 = nn.Linear(64, input_size)
+        self.fc1 = nn.Linear(input_size + self.embedding_dimension, 128)
+        self.fc2 = nn.Linear(128, 256)
+        self.fc3 = nn.Linear(256, 512)
+        self.fc4 = nn.Linear(512, 256)
+        self.fc5 = nn.Linear(256, 128)
+        self.fc6 = nn.Linear(128, input_size)
 
         self.relu = nn.ReLU()
 
