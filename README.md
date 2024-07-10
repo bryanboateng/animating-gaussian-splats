@@ -89,39 +89,7 @@ To see all available arguments and options, run:
 python train_deformation_network.py -h
 ```
 
-### Visualization Scripts
-
-#### "View Clouds Interactively" Script
-
-This script visualizes the training data interactively using Open3D.
-> [!NOTE]
-> This script may not work in all environments (e.g., Google Colab).
-
-To run the "View Clouds Interactively" script:
-
-```bash
-python view_clouds_interactively.py [options]
-```
-
-Example:
-
-```bash
-python view_clouds_interactively.py \
-  --parameters_directory_path /path/to/output-parameters/ \
-  --experiment_id foo \
-  --sequence_name basketball \
-```
-
-To see all available arguments and options, run:
-
-```bash
-python view_clouds_interactively.py -h
-```
-
-#### "Generate Cloud Video" Script
-
-If the "View Clouds Interactively" script is not supported in your environment,
-you can use the "Generate Cloud Video" script, which renders the data as a video.
+### Visualization Script
 
 To run the "Generate Cloud Video" script:
 
