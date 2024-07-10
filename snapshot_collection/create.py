@@ -9,10 +9,8 @@ import open3d as o3d
 import torch
 from tqdm import tqdm
 
-import external
-from command import Command
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
-from helpers import (
+from commons.command import Command
+from commons.helpers import (
     l1_loss_v1,
     l1_loss_v2,
     weighted_l2_loss_v1,
@@ -21,11 +19,24 @@ from helpers import (
     GaussianCloudParameterNames,
     Variables,
 )
-from training_commons import Capture, load_timestep_captures, get_random_element, get_timestep_count
+from commons.training_commons import (
+    Capture,
+    load_timestep_captures,
+    get_random_element,
+    get_timestep_count,
+)
+from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from snapshot_collection.external import (
+    build_rotation,
+    calc_ssim,
+    calc_psnr,
+    densify_gaussians,
+    update_params_and_optimizer,
+)
 
 
 @dataclass
-class Trainer(Command):
+class Create(Command):
     sequence_name: str = MISSING
     data_directory_path: str = MISSING
     output_directory_path: str = "./output/"
@@ -103,7 +114,7 @@ class Trainer(Command):
             ]
             > 0.5
         )
-        inverted_foreground_rotations = Trainer._get_inverted_foreground_rotations(
+        inverted_foreground_rotations = Create._get_inverted_foreground_rotations(
             current_rotations, foreground_mask
         )
         foreground_means = current_means[foreground_mask]
@@ -125,7 +136,7 @@ class Trainer(Command):
             GaussianCloudParameterNames.means: updated_means,
             GaussianCloudParameterNames.rotation_quaternions: updated_rotations,
         }
-        external.update_params_and_optimizer(
+        update_params_and_optimizer(
             updated_parameters, gaussian_cloud_parameters, optimizer
         )
 
@@ -185,11 +196,11 @@ class Trainer(Command):
         gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
         target_capture: Capture,
     ):
-        image = Trainer._apply_exponential_transform_and_center_to_image(
+        image = Create._apply_exponential_transform_and_center_to_image(
             rendered_image, gaussian_cloud_parameters, target_capture.camera.id_
         )
         return 0.8 * l1_loss_v1(image, target_capture.image) + 0.2 * (
-            1.0 - external.calc_ssim(image, target_capture.image)
+            1.0 - calc_ssim(image, target_capture.image)
         )
 
     @staticmethod
@@ -198,7 +209,7 @@ class Trainer(Command):
         foreground_offset_to_neighbors,
         variables: Variables,
     ):
-        rotation_matrix = external.build_rotation(relative_rotation_quaternion)
+        rotation_matrix = build_rotation(relative_rotation_quaternion)
         curr_offset_in_prev_coord = (
             rotation_matrix.transpose(2, 1)[:, None]
             @ foreground_offset_to_neighbors[:, :, :, None]
@@ -255,7 +266,7 @@ class Trainer(Command):
     ):
         losses = {}
 
-        gaussian_cloud = Trainer._create_gaussian_cloud(gaussian_cloud_parameters)
+        gaussian_cloud = Create._create_gaussian_cloud(gaussian_cloud_parameters)
         gaussian_cloud["means2D"].retain_grad()
         (
             rendered_image,
@@ -264,14 +275,14 @@ class Trainer(Command):
         ) = Renderer(
             raster_settings=target_capture.camera.gaussian_rasterization_settings
         )(**gaussian_cloud)
-        losses["im"] = Trainer._calculate_image_loss(
+        losses["im"] = Create._calculate_image_loss(
             rendered_image, gaussian_cloud_parameters, target_capture
         )
         variables.external_means2D = gaussian_cloud[
             "means2D"
         ]  # Gradient only accum from colour render for densification
 
-        gaussian_cloud = Trainer._create_gaussian_cloud(gaussian_cloud_parameters)
+        gaussian_cloud = Create._create_gaussian_cloud(gaussian_cloud_parameters)
         gaussian_cloud["colors_precomp"] = gaussian_cloud_parameters[
             GaussianCloudParameterNames.segmentation_masks
         ]
@@ -284,10 +295,7 @@ class Trainer(Command):
         )(**gaussian_cloud)
         losses["seg"] = 0.8 * l1_loss_v1(
             segmentation_mask, target_capture.segmentation_mask
-        ) + 0.2 * (
-            1.0
-            - external.calc_ssim(segmentation_mask, target_capture.segmentation_mask)
-        )
+        ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_capture.segmentation_mask))
 
         if not calculate_only_subset_of_losses:
             foreground_mask = (
@@ -308,7 +316,7 @@ class Trainer(Command):
             foreground_offset_to_neighbors = (
                 foreground_neighbor_means - foreground_means[:, None]
             )
-            losses["rigid"] = Trainer._calculate_rigidity_loss(
+            losses["rigid"] = Create._calculate_rigidity_loss(
                 relative_rotation_quaternion, foreground_offset_to_neighbors, variables
             )
 
@@ -317,11 +325,11 @@ class Trainer(Command):
                 relative_rotation_quaternion[:, None],
                 variables.neighbor_weight,
             )
-            losses["iso"] = Trainer._calculate_isometry_loss(
+            losses["iso"] = Create._calculate_isometry_loss(
                 foreground_offset_to_neighbors, variables
             )
             losses["floor"] = torch.clamp(foreground_means[:, 1], min=0).mean()
-            losses["bg"] = Trainer._calculate_background_loss(
+            losses["bg"] = Create._calculate_background_loss(
                 gaussian_cloud, foreground_mask, variables
             )
             losses["soft_col_cons"] = l1_loss_v2(
@@ -334,7 +342,7 @@ class Trainer(Command):
             radii[seen], variables.external_max_2D_radius[seen]
         )
         variables.external_seen = seen
-        return Trainer._combine_losses(losses)
+        return Create._combine_losses(losses)
 
     @staticmethod
     def _report_progress(
@@ -346,14 +354,14 @@ class Trainer(Command):
             _,
         ) = Renderer(
             raster_settings=dataset_element.camera.gaussian_rasterization_settings
-        )(**Trainer._create_gaussian_cloud(params))
+        )(**Create._create_gaussian_cloud(params))
         camera_id = dataset_element.camera.id_
-        image = Trainer._apply_exponential_transform_and_center_to_image(
+        image = Create._apply_exponential_transform_and_center_to_image(
             rendered_image, params, camera_id
         )
         progress_bar.set_postfix(
             {
-                "train img 0 PSNR": f"{external.calc_psnr(image, dataset_element.image).mean() :.{7}f}"
+                "train img 0 PSNR": f"{calc_psnr(image, dataset_element.image).mean() :.{7}f}"
             }
         )
         progress_bar.update(report_interval)
@@ -400,7 +408,7 @@ class Trainer(Command):
             ]
         )
         neighbor_indices_list, neighbor_squared_distances_list = (
-            Trainer._compute_knn_indices_and_squared_distances(
+            Create._compute_knn_indices_and_squared_distances(
                 foreground_means.detach().cpu().numpy(), 20
             )
         )
@@ -586,7 +594,7 @@ class Trainer(Command):
                             report_interval,
                         )
                     if is_initial_timestep:
-                        external.densify_gaussians(
+                        densify_gaussians(
                             gaussian_cloud_parameters, variables, optimizer, i
                         )
                     optimizer.step()
@@ -607,7 +615,7 @@ class Trainer(Command):
 
 
 def main():
-    command = Trainer.__new__(Trainer)
+    command = Create.__new__(Create)
     command.parse_args()
     command.run()
 

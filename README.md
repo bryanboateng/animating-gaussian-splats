@@ -6,11 +6,10 @@ For a quick and easy way to test and run the scripts,
 you can use the provided Google Colab notebooks.
 These notebooks allow you to execute the code without setting up a local environment.
 
-| Notebook Name | Google Colab Link |
-| -------------- | --------------- |
-| Train Per Timestamp | [![Open "Train Per Timestamp" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/train_per_timestamp.ipynb) |
-| Train Deformation Network | [![Open "Train Deformation Network" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/train_deformation_network.ipynb) |
-| Generate Cloud Video | [![Open "Generate Cloud Video" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/google_colab_runners/generate_cloud_video.ipynb)|
+| Format              | Create                                                                                                                                                                                                                                                            | View                                                                                                                                                                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------   | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deformation Network | [![Open "Create Deformation Network"-Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/deformation_network/google_colab_notebooks/create.ipynb) | [![Open "View Deformation Network" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/deformation_network/google_colab_notebooks/view.ipynb) |
+| Snapshot Collection | [![Open "Create Snapshot Collection"-Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/snapshot_collection/google_colab_notebooks/create.ipynb) | [![Open "View Snapshot Collection" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/snapshot_collection/google_colab_notebooks/view.ipynb) |
 
 ## Prerequisites
 
@@ -35,83 +34,67 @@ To run the scripts locally, ensure you have the following prerequisites:
    pip install -r requirements.txt
    ```
 
+Natürlich, hier ist die überarbeitete Version auf Englisch:
+
 ## Scripts
 
-### Training Scripts
+### Snapshot Collection
 
-#### "Train Per Timestamp" Script
+#### Creating a Snapshot Collection
 
-The "Train Per Timestamp" script is used to train the model by optimizing the Gaussian clouds for each timestamp.
-
-To run the "Train Per Timestamp" script:
+To create a snapshot collection, use the following command:
 
 ```bash
-python train_per_timestamp.py sequence_name data_directory_path [options]
-```
-
-Example:
-
-```bash
-python train_per_timestamp.py \
- basketball \
- /content/drive/MyDrive/4d-gaussians/input-data/ \
- --output_directory_path /content/drive/MyDrive/4d-gaussians/output-parameters/
+python snapshot_collection.create sequence_name data_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python train_per_timestamp.py -h
+python snapshot_collection.create -h
 ```
 
-#### "Train Deformation Network" Script
+#### Viewing a Snapshot Collection
 
-The "Train Deformation Network" script is used to train the model by learning the deformation between timestamps.
-
-To run the "Train Deformation Network" script:
+To view the stored snapshot collection, use the following command:
 
 ```bash
-python train_deformation_network.py sequence_name data_directory_path [options]
-```
-
-Example:
-
-```bash
-python train_deformation_network.py \
- basketball \
- /content/drive/MyDrive/4d-gaussians/input-data/ \
- --learning_rate 0.01
+python snapshot_collection.view experiment_id sequence_name parameters_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python train_deformation_network.py -h
+python snapshot_collection.view -h
 ```
 
-### Visualization Script
+### Deformation Network
 
-To run the "Generate Cloud Video" script:
+#### Creating a Deformation Network
 
-```bash
-python generate_cloud_video.py experiment_id sequence_name parameters_directory_path [options]
-```
-
-Example:
+To create a deformation network, use the following command:
 
 ```bash
-python generate_cloud_video.py \
-  foo \
-  basketball \
-  /path/to/output-parameters/ \
-  --rendered_sequence_directory_path /path/to/renders/ \
-  --image_width 1280 \
-  --image_height 720 \
-  --render_degrees_per_second 90
+python deformation_network.create sequence_name data_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python generate_cloud_video.py -h
+python deformation_network.create -h
+```
+
+#### Viewing a Deformation Network
+
+To view the sequence represented by the stored deformation network,
+use the following command:
+
+```bash
+python deformation_network.view sequence_name data_directory_path [options]
+```
+
+To see all available arguments and options, run:
+
+```bash
+python deformation_network.view -h
 ```

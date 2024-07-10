@@ -7,33 +7,32 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from command import Command
-
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
-from helpers import (
-    Camera,
+from commons.command import Command
+from commons.helpers import (
     GaussianCloudParameterNames,
+    render_and_increase_yaw,
 )
 
 
 @dataclass
-class CloudVideoGenerator(Command):
+class View(Command):
     experiment_id: str = MISSING
     sequence_name: str = MISSING
     parameters_directory_path: str = MISSING
-    rendered_sequence_directory_path = "./renders/"
-    render_fps = 30
-    render_degrees_per_second = 30
+    rendered_sequence_directory_path: str = "./renders/"
+    fps: int = 30
+    starting_yaw: float = 90
+    yaw_degrees_per_second: int = 30
 
-    image_width = 640
-    image_height = 360
-    near_clipping_plane_distance = 0.01
-    far_clipping_plane_distance = 100
-    distance_to_center = 2.4
-    height = 1.3
-    aspect_ratio = 0.82
+    image_width: int = 640
+    image_height: int = 360
+    near_clipping_plane_distance: float = 0.01
+    far_clipping_plane_distance: float = 100
+    distance_to_center: float = 2.4
+    height: float = 1.3
+    aspect_ratio: float = 0.82
 
-    seg_as_col = False
+    seg_as_col: bool = False
 
     def _set_absolute_paths(self):
         self.parameters_directory_path = os.path.abspath(self.parameters_directory_path)
@@ -82,46 +81,28 @@ class CloudVideoGenerator(Command):
             )
         return processed_gaussian_sequence
 
-    def _render_gaussians(self, gaussians, yaw: float):
-        camera = Camera.from_parameters(
-            id_=0,
-            image_width=self.image_width,
-            image_height=self.image_height,
-            near_clipping_plane_distance=self.near_clipping_plane_distance,
-            far_clipping_plane_distance=self.far_clipping_plane_distance,
-            yaw=yaw,
-            distance_to_center=self.distance_to_center,
-            height=self.height,
-            aspect_ratio=self.aspect_ratio,
-        )
-        with torch.no_grad():
-            (
-                image,
-                _,
-                _,
-            ) = Renderer(
-                raster_settings=camera.gaussian_rasterization_settings
-            )(**gaussians)
-            return image
-
     def run(self):
         self._set_absolute_paths()
         gaussian_sequence = self._load_gaussian_sequence()
         render_images = []
         start_time = time.time()
-        yaw = 0
+        yaw = self.starting_yaw
         for gaussians in tqdm(gaussian_sequence, desc="Rendering progress"):
-            render_images.append(
-                (
-                    255
-                    * np.clip(
-                        self._render_gaussians(gaussians, yaw).cpu().numpy(), 0, 1
-                    )
-                )
-                .astype(np.uint8)
-                .transpose(1, 2, 0)
+            render_and_increase_yaw(
+                gaussian_cloud=gaussians,
+                render_images=render_images,
+                image_width=self.image_width,
+                image_height=self.image_height,
+                near_clipping_plane_distance=self.near_clipping_plane_distance,
+                far_clipping_plane_distance=self.far_clipping_plane_distance,
+                yaw=yaw,
+                yaw_degrees_per_second=self.yaw_degrees_per_second,
+                distance_to_center=self.distance_to_center,
+                height=self.height,
+                aspect_ratio=self.aspect_ratio,
+                fps=self.fps,
             )
-            yaw += self.render_degrees_per_second / self.render_fps
+
         finish_time = time.time()
         print(
             "Possible FPS:", (len(gaussian_sequence) - 1) / (finish_time - start_time)
@@ -136,12 +117,12 @@ class CloudVideoGenerator(Command):
         imageio.mimwrite(
             rendered_sequence_path,
             render_images,
-            fps=self.render_fps,
+            fps=self.fps,
         )
 
 
 def main():
-    command = CloudVideoGenerator.__new__(CloudVideoGenerator)
+    command = View.__new__(View)
     command.parse_args()
     command.run()
 

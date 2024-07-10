@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from helpers import Camera
+from commons.helpers import Camera
 
 
 class Capture:
