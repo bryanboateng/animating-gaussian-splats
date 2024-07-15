@@ -157,45 +157,6 @@ class Camera:
         )
 
 
-class Variables:
-    def __init__(
-        self,
-        max_2D_radius,
-        scene_radius: float,
-        initial_background_points=None,
-        initial_background_rotations=None,
-        neighbor_indices_list: Optional[torch.Tensor] = None,
-        neighbor_weight=None,
-        neighbor_distances_list: Optional[torch.Tensor] = None,
-        means2D_gradient_accum=None,
-        seen=None,
-        denom: Optional[torch.Tensor] = None,
-        previous_rotations=None,
-        previous_inverted_foreground_rotations=None,
-        previous_offsets_to_neighbors=None,
-        previous_colors=None,
-        previous_means=None,
-    ):
-        self.initial_background_means = initial_background_points
-        self.initial_background_rotations = initial_background_rotations
-        self.neighbor_indices_list = neighbor_indices_list
-        self.neighbor_weight = neighbor_weight
-        self.neighbor_distances_list = neighbor_distances_list
-        self.external_means2D = None
-        self.external_means2D_gradient_accum = means2D_gradient_accum
-        self.external_max_2D_radius = max_2D_radius
-        self.external_scene_radius = scene_radius
-        self.external_seen = seen
-        self.external_denom = denom
-        self.previous_rotations = previous_rotations
-        self.previous_inverted_foreground_rotations = (
-            previous_inverted_foreground_rotations
-        )
-        self.previous_offsets_to_neighbors = previous_offsets_to_neighbors
-        self.previous_colors = previous_colors
-        self.previous_means = previous_means
-
-
 def render_gaussians(
     gaussians,
     image_width,

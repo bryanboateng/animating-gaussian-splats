@@ -18,7 +18,6 @@ from commons.helpers import (
     weighted_l2_loss_v2,
     quat_mult,
     GaussianCloudParameterNames,
-    Variables,
 )
 from commons.training_commons import (
     Capture,
@@ -30,10 +29,65 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from snapshot_collection.external import (
     build_rotation,
     calc_ssim,
-    calc_psnr,
     densify_gaussians,
     update_params_and_optimizer,
+    DensificationVariables,
 )
+
+
+class GaussianCloud:
+    def __init__(self, parameters: dict[str, torch.nn.Parameter]):
+        self.means_2d = (
+            torch.zeros_like(
+                parameters[GaussianCloudParameterNames.means],
+                requires_grad=True,
+                device="cuda",
+            )
+            + 0
+        )
+        self.means_3d = parameters[GaussianCloudParameterNames.means]
+        self.colors = parameters[GaussianCloudParameterNames.colors]
+        self.rotations = torch.nn.functional.normalize(
+            parameters[GaussianCloudParameterNames.rotation_quaternions]
+        )
+        self.opacities = torch.sigmoid(
+            parameters[GaussianCloudParameterNames.opacities_logits]
+        )
+        self.scales = torch.exp(parameters[GaussianCloudParameterNames.log_scales])
+
+    def get_renderer_format(self):
+        return {
+            "means3D": self.means_3d,
+            "colors_precomp": self.colors,
+            "rotations": self.rotations,
+            "opacities": self.opacities,
+            "scales": self.scales,
+            "means2D": self.means_2d,
+        }
+
+
+class Neighborhoods:
+    def __init__(
+        self, distances: torch.Tensor, weights: torch.Tensor, indices: torch.Tensor
+    ):
+        self.distances: torch.Tensor = distances
+        self.weights: torch.Tensor = weights
+        self.indices: torch.Tensor = indices
+
+
+class Background:
+    def __init__(self, means: torch.Tensor, rotations: torch.Tensor):
+        self.means: torch.Tensor = means
+        self.rotations: torch.Tensor = rotations
+
+
+class GaussianCloudReferenceState:
+    def __init__(self, means: torch.Tensor, rotations: torch.Tensor):
+        self.means: torch.Tensor = means
+        self.rotations: torch.Tensor = rotations
+        self.inverted_foreground_rotations: Optional[torch.Tensor] = None
+        self.offsets_to_neighbors: Optional[torch.Tensor] = None
+        self.colors: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -66,7 +120,17 @@ class Create(Command):
         return np.array(indices_list), np.array(squared_distances_list)
 
     @staticmethod
-    def _create_optimizer(parameters, scene_radius: float):
+    def _get_scene_radius(dataset_metadata):
+        camera_centers = np.linalg.inv(dataset_metadata["w2c"][0])[:, :3, 3]
+        scene_radius = 1.1 * np.max(
+            np.linalg.norm(camera_centers - np.mean(camera_centers, 0)[None], axis=-1)
+        )
+        return scene_radius
+
+    @staticmethod
+    def _create_optimizer(
+        parameters: dict[str, torch.nn.Parameter], scene_radius: float
+    ):
         learning_rates = {
             GaussianCloudParameterNames.means: 0.00016 * scene_radius,
             GaussianCloudParameterNames.colors: 0.0025,
@@ -87,79 +151,27 @@ class Create(Command):
         )
 
     @staticmethod
-    def _get_inverted_foreground_rotations(
-        rotations: torch.Tensor, foreground_mask: torch.Tensor
+    def _create_densification_variables(
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
     ):
-        foreground_rotations = rotations[foreground_mask]
-        foreground_rotations[:, 1:] = -1 * foreground_rotations[:, 1:]
-        return foreground_rotations
-
-    @staticmethod
-    def _update_variables_and_optimizer_and_gaussian_cloud_parameters(
-        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-        variables: Variables,
-        optimizer: torch.optim.Adam,
-    ):
-        current_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means]
-        updated_means = current_means + (current_means - variables.previous_means)
-        current_rotations = torch.nn.functional.normalize(
-            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions]
-        )
-        updated_rotations = torch.nn.functional.normalize(
-            current_rotations + (current_rotations - variables.previous_rotations)
-        )
-
-        foreground_mask = (
-            gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][
-                :, 0
-            ]
-            > 0.5
-        )
-        inverted_foreground_rotations = Create._get_inverted_foreground_rotations(
-            current_rotations, foreground_mask
-        )
-        foreground_means = current_means[foreground_mask]
-        offsets_to_neighbors = (
-            foreground_means[variables.neighbor_indices_list]
-            - foreground_means[:, None]
-        )
-        variables.previous_inverted_foreground_rotations = (
-            inverted_foreground_rotations.detach()
-        )
-        variables.previous_offsets_to_neighbors = offsets_to_neighbors.detach()
-        variables.previous_colors = gaussian_cloud_parameters[
-            GaussianCloudParameterNames.colors
-        ].detach()
-        variables.previous_means = current_means.detach()
-        variables.previous_rotations = current_rotations.detach()
-
-        updated_parameters = {
-            GaussianCloudParameterNames.means: updated_means,
-            GaussianCloudParameterNames.rotation_quaternions: updated_rotations,
-        }
-        update_params_and_optimizer(
-            updated_parameters, gaussian_cloud_parameters, optimizer
-        )
-
-    @staticmethod
-    def _create_gaussian_cloud(parameters: dict[str, torch.nn.Parameter]):
-        return {
-            "means3D": parameters[GaussianCloudParameterNames.means],
-            "colors_precomp": parameters[GaussianCloudParameterNames.colors],
-            "rotations": torch.nn.functional.normalize(
-                parameters[GaussianCloudParameterNames.rotation_quaternions]
-            ),
-            "opacities": torch.sigmoid(
-                parameters[GaussianCloudParameterNames.opacities_logits]
-            ),
-            "scales": torch.exp(parameters[GaussianCloudParameterNames.log_scales]),
-            "means2D": torch.zeros_like(
-                parameters[GaussianCloudParameterNames.means],
-                requires_grad=True,
-                device="cuda",
+        densification_variables = DensificationVariables(
+            visibility_count=torch.zeros(
+                gaussian_cloud_parameters[GaussianCloudParameterNames.means].shape[0]
             )
-            + 0,
-        }
+            .cuda()
+            .float(),
+            mean_2d_gradients_accumulated=torch.zeros(
+                gaussian_cloud_parameters[GaussianCloudParameterNames.means].shape[0]
+            )
+            .cuda()
+            .float(),
+            max_2d_radii=torch.zeros(
+                gaussian_cloud_parameters[GaussianCloudParameterNames.means].shape[0]
+            )
+            .cuda()
+            .float(),
+        )
+        return densification_variables
 
     @staticmethod
     def _apply_exponential_transform_and_center_to_image(
@@ -205,43 +217,65 @@ class Create(Command):
         )
 
     @staticmethod
-    def _calculate_rigidity_loss(
-        relative_rotation_quaternion,
-        foreground_offset_to_neighbors,
-        variables: Variables,
+    def _add_image_loss(
+        losses: dict[str, torch.Tensor],
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        target_capture: Capture,
     ):
-        rotation_matrix = build_rotation(relative_rotation_quaternion)
-        curr_offset_in_prev_coord = (
-            rotation_matrix.transpose(2, 1)[:, None]
-            @ foreground_offset_to_neighbors[:, :, :, None]
-        ).squeeze(-1)
-        return weighted_l2_loss_v2(
-            curr_offset_in_prev_coord,
-            variables.previous_offsets_to_neighbors,
-            variables.neighbor_weight,
+        gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+        gaussian_cloud.means_2d.retain_grad()
+        (
+            rendered_image,
+            radii,
+            _,
+        ) = Renderer(
+            raster_settings=target_capture.camera.gaussian_rasterization_settings
+        )(**gaussian_cloud.get_renderer_format())
+        losses["im"] = Create._calculate_image_loss(
+            rendered_image=rendered_image,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            target_capture=target_capture,
         )
+        means_2d = (
+            gaussian_cloud.means_2d
+        )  # Gradient only accum from colour render for densification
+        return means_2d, radii
 
     @staticmethod
-    def _calculate_isometry_loss(foreground_offset_to_neighbors, variables: Variables):
-        curr_offset_mag = torch.sqrt(
-            (foreground_offset_to_neighbors**2).sum(-1) + 1e-20
-        )
-        return weighted_l2_loss_v1(
-            curr_offset_mag,
-            variables.neighbor_distances_list,
-            variables.neighbor_weight,
-        )
+    def _add_segmentation_loss(
+        losses: dict[str, torch.Tensor],
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        target_capture: Capture,
+    ):
+        gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+        gaussian_cloud.colors = gaussian_cloud_parameters[
+            GaussianCloudParameterNames.segmentation_masks
+        ]
+        (
+            segmentation_mask,
+            _,
+            _,
+        ) = Renderer(
+            raster_settings=target_capture.camera.gaussian_rasterization_settings
+        )(**gaussian_cloud.get_renderer_format())
+        losses["seg"] = 0.8 * l1_loss_v1(
+            segmentation_mask, target_capture.segmentation_mask
+        ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_capture.segmentation_mask))
+        return gaussian_cloud
 
     @staticmethod
-    def _calculate_background_loss(gaussian_cloud, is_foreground, variables: Variables):
-        bg_pts = gaussian_cloud["means3D"][~is_foreground]
-        bg_rot = gaussian_cloud["rotations"][~is_foreground]
-        return l1_loss_v2(bg_pts, variables.initial_background_means) + l1_loss_v2(
-            bg_rot, variables.initial_background_rotations
+    def _update_max_2d_radii_and_visibility_mask(
+        radii, densification_variables: DensificationVariables
+    ):
+        radius_is_positive = radii > 0
+        densification_variables.max_2d_radii[radius_is_positive] = torch.max(
+            radii[radius_is_positive],
+            densification_variables.max_2d_radii[radius_is_positive],
         )
+        densification_variables.gaussian_is_visible_mask = radius_is_positive
 
     @staticmethod
-    def _combine_losses(losses):
+    def _combine_losses(losses: dict[str, torch.Tensor]):
         loss_weights = {
             "im": 1.0,
             "seg": 3.0,
@@ -259,138 +293,34 @@ class Create(Command):
         )
 
     @staticmethod
-    def _calculate_loss(
+    def _calculate_image_and_segmentation_loss(
         gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
         target_capture: Capture,
-        variables: Variables,
-        calculate_only_subset_of_losses: bool,
+        densification_variables: DensificationVariables,
     ):
         losses = {}
-
-        gaussian_cloud = Create._create_gaussian_cloud(gaussian_cloud_parameters)
-        gaussian_cloud["means2D"].retain_grad()
-        (
-            rendered_image,
-            radii,
-            _,
-        ) = Renderer(
-            raster_settings=target_capture.camera.gaussian_rasterization_settings
-        )(**gaussian_cloud)
-        losses["im"] = Create._calculate_image_loss(
-            rendered_image, gaussian_cloud_parameters, target_capture
+        means_2d, radii = Create._add_image_loss(
+            losses=losses,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            target_capture=target_capture,
         )
-        variables.external_means2D = gaussian_cloud[
-            "means2D"
-        ]  # Gradient only accum from colour render for densification
-
-        gaussian_cloud = Create._create_gaussian_cloud(gaussian_cloud_parameters)
-        gaussian_cloud["colors_precomp"] = gaussian_cloud_parameters[
-            GaussianCloudParameterNames.segmentation_masks
-        ]
-        (
-            segmentation_mask,
-            _,
-            _,
-        ) = Renderer(
-            raster_settings=target_capture.camera.gaussian_rasterization_settings
-        )(**gaussian_cloud)
-        losses["seg"] = 0.8 * l1_loss_v1(
-            segmentation_mask, target_capture.segmentation_mask
-        ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_capture.segmentation_mask))
-
-        if not calculate_only_subset_of_losses:
-            foreground_mask = (
-                gaussian_cloud_parameters[
-                    GaussianCloudParameterNames.segmentation_masks
-                ][:, 0]
-                > 0.5
-            ).detach()
-            foreground_means = gaussian_cloud["means3D"][foreground_mask]
-            foreground_rotations = gaussian_cloud["rotations"][foreground_mask]
-
-            relative_rotation_quaternion = quat_mult(
-                foreground_rotations, variables.previous_inverted_foreground_rotations
-            )
-            foreground_neighbor_means = foreground_means[
-                variables.neighbor_indices_list
-            ]
-            foreground_offset_to_neighbors = (
-                foreground_neighbor_means - foreground_means[:, None]
-            )
-            losses["rigid"] = Create._calculate_rigidity_loss(
-                relative_rotation_quaternion, foreground_offset_to_neighbors, variables
-            )
-
-            losses["rot"] = weighted_l2_loss_v2(
-                relative_rotation_quaternion[variables.neighbor_indices_list],
-                relative_rotation_quaternion[:, None],
-                variables.neighbor_weight,
-            )
-            losses["iso"] = Create._calculate_isometry_loss(
-                foreground_offset_to_neighbors, variables
-            )
-            losses["floor"] = torch.clamp(foreground_means[:, 1], min=0).mean()
-            losses["bg"] = Create._calculate_background_loss(
-                gaussian_cloud, foreground_mask, variables
-            )
-            losses["soft_col_cons"] = l1_loss_v2(
-                gaussian_cloud_parameters[GaussianCloudParameterNames.colors],
-                variables.previous_colors,
-            )
-
-        seen = radii > 0
-        variables.external_max_2D_radius[seen] = torch.max(
-            radii[seen], variables.external_max_2D_radius[seen]
+        _ = Create._add_segmentation_loss(
+            losses=losses,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            target_capture=target_capture,
         )
-        variables.external_seen = seen
-        return Create._combine_losses(losses)
-
-    @staticmethod
-    def _report_progress(
-        params, dataset_element: Capture, progress_bar: tqdm, report_interval
-    ):
-        (
-            rendered_image,
-            _,
-            _,
-        ) = Renderer(
-            raster_settings=dataset_element.camera.gaussian_rasterization_settings
-        )(**Create._create_gaussian_cloud(params))
-        camera_id = dataset_element.camera.id_
-        image = Create._apply_exponential_transform_and_center_to_image(
-            rendered_image, params, camera_id
+        densification_variables.means_2d = means_2d
+        Create._update_max_2d_radii_and_visibility_mask(
+            radii=radii, densification_variables=densification_variables
         )
-        progress_bar.set_postfix(
-            {
-                "train img 0 PSNR": f"{calc_psnr(image, dataset_element.image).mean() :.{7}f}"
-            }
-        )
-        progress_bar.update(report_interval)
-
-    @staticmethod
-    def _convert_parameters_to_numpy(
-        parameters: dict[str, torch.nn.Parameter], include_dynamic_parameters_only: bool
-    ):
-        if include_dynamic_parameters_only:
-            return {
-                k: v.detach().cpu().contiguous().numpy()
-                for k, v in parameters.items()
-                if k
-                in [
-                    GaussianCloudParameterNames.means,
-                    GaussianCloudParameterNames.colors,
-                    GaussianCloudParameterNames.rotation_quaternions,
-                ]
-            }
-        else:
-            return {
-                k: v.detach().cpu().contiguous().numpy() for k, v in parameters.items()
-            }
+        return Create._combine_losses(losses), densification_variables
 
     @staticmethod
     def _initialize_post_first_timestep(
-        gaussian_cloud_parameters, variables: Variables, optimizer
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        optimizer: torch.optim.Adam,
     ):
+
         foreground_mask = (
             gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][
                 :, 0
@@ -413,29 +343,35 @@ class Create(Command):
                 foreground_means.detach().cpu().numpy(), 20
             )
         )
-        variables.neighbor_indices_list = (
-            torch.tensor(neighbor_indices_list).cuda().long().contiguous()
+        neighborhoods = Neighborhoods(
+            indices=(torch.tensor(neighbor_indices_list).cuda().long().contiguous()),
+            weights=(
+                torch.tensor(np.exp(-2000 * neighbor_squared_distances_list))
+                .cuda()
+                .float()
+                .contiguous()
+            ),
+            distances=(
+                torch.tensor(np.sqrt(neighbor_squared_distances_list))
+                .cuda()
+                .float()
+                .contiguous()
+            ),
         )
-        variables.neighbor_weight = (
-            torch.tensor(np.exp(-2000 * neighbor_squared_distances_list))
-            .cuda()
-            .float()
-            .contiguous()
+        background = Background(
+            means=background_means.detach(),
+            rotations=background_rotations.detach(),
         )
-        variables.neighbor_distances_list = (
-            torch.tensor(np.sqrt(neighbor_squared_distances_list))
-            .cuda()
-            .float()
-            .contiguous()
+
+        previous_timestep_gaussian_cloud_state = GaussianCloudReferenceState(
+            means=gaussian_cloud_parameters[GaussianCloudParameterNames.means].detach(),
+            rotations=torch.nn.functional.normalize(
+                gaussian_cloud_parameters[
+                    GaussianCloudParameterNames.rotation_quaternions
+                ]
+            ).detach(),
         )
-        variables.initial_background_means = background_means.detach()
-        variables.initial_background_rotations = background_rotations.detach()
-        variables.previous_means = gaussian_cloud_parameters[
-            GaussianCloudParameterNames.means
-        ].detach()
-        variables.previous_rotations = torch.nn.functional.normalize(
-            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions]
-        ).detach()
+
         parameters_to_fix = [
             GaussianCloudParameterNames.opacities_logits,
             GaussianCloudParameterNames.log_scales,
@@ -445,12 +381,221 @@ class Create(Command):
         for parameter_group in optimizer.param_groups:
             if parameter_group["name"] in parameters_to_fix:
                 parameter_group["lr"] = 0.0
+        return background, neighborhoods, previous_timestep_gaussian_cloud_state
+
+    @staticmethod
+    def _convert_parameters_to_numpy(
+        parameters: dict[str, torch.nn.Parameter], include_dynamic_parameters_only: bool
+    ):
+        if include_dynamic_parameters_only:
+            return {
+                k: v.detach().cpu().contiguous().numpy()
+                for k, v in parameters.items()
+                if k
+                in [
+                    GaussianCloudParameterNames.means,
+                    GaussianCloudParameterNames.colors,
+                    GaussianCloudParameterNames.rotation_quaternions,
+                ]
+            }
+        else:
+            return {
+                k: v.detach().cpu().contiguous().numpy() for k, v in parameters.items()
+            }
+
+    @staticmethod
+    def _get_inverted_foreground_rotations(
+        rotations: torch.Tensor, foreground_mask: torch.Tensor
+    ):
+        foreground_rotations = rotations[foreground_mask]
+        foreground_rotations[:, 1:] = -1 * foreground_rotations[:, 1:]
+        return foreground_rotations
+
+    @staticmethod
+    def _update_variables_and_optimizer_and_gaussian_cloud_parameters(
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
+        neighborhood_indices: torch.Tensor,
+        optimizer: torch.optim.Adam,
+    ):
+        current_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means]
+        updated_means = current_means + (
+            current_means - previous_timestep_gaussian_cloud_state.means
+        )
+        current_rotations = torch.nn.functional.normalize(
+            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions]
+        )
+        updated_rotations = torch.nn.functional.normalize(
+            current_rotations
+            + (current_rotations - previous_timestep_gaussian_cloud_state.rotations)
+        )
+
+        foreground_mask = (
+            gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][
+                :, 0
+            ]
+            > 0.5
+        )
+        inverted_foreground_rotations = Create._get_inverted_foreground_rotations(
+            current_rotations, foreground_mask
+        )
+        foreground_means = current_means[foreground_mask]
+        offsets_to_neighbors = (
+            foreground_means[neighborhood_indices] - foreground_means[:, None]
+        )
+
+        previous_timestep_gaussian_cloud_state.inverted_foreground_rotations = (
+            inverted_foreground_rotations.detach()
+        )
+        previous_timestep_gaussian_cloud_state.offsets_to_neighbors = (
+            offsets_to_neighbors.detach()
+        )
+        previous_timestep_gaussian_cloud_state.colors = gaussian_cloud_parameters[
+            GaussianCloudParameterNames.colors
+        ].detach()
+        previous_timestep_gaussian_cloud_state.means = current_means.detach()
+        previous_timestep_gaussian_cloud_state.rotations = current_rotations.detach()
+
+        updated_parameters = {
+            GaussianCloudParameterNames.means: updated_means,
+            GaussianCloudParameterNames.rotation_quaternions: updated_rotations,
+        }
+        update_params_and_optimizer(
+            updated_parameters, gaussian_cloud_parameters, optimizer
+        )
+
+    @staticmethod
+    def _calculate_rigidity_loss(
+        relative_rotation_quaternion: torch.Tensor,
+        foreground_offset_to_neighbors: torch.Tensor,
+        previous_offsets_to_neighbors: torch.Tensor,
+        neighborhood_weights: torch.Tensor,
+    ):
+        rotation_matrix = build_rotation(relative_rotation_quaternion)
+        curr_offset_in_prev_coord = (
+            rotation_matrix.transpose(2, 1)[:, None]
+            @ foreground_offset_to_neighbors[:, :, :, None]
+        ).squeeze(-1)
+        return weighted_l2_loss_v2(
+            curr_offset_in_prev_coord,
+            previous_offsets_to_neighbors,
+            neighborhood_weights,
+        )
+
+    @staticmethod
+    def _calculate_isometry_loss(
+        foreground_offset_to_neighbors: torch.Tensor,
+        initial_neighborhoods: Neighborhoods,
+    ):
+        curr_offset_mag = torch.sqrt(
+            (foreground_offset_to_neighbors**2).sum(-1) + 1e-20
+        )
+        return weighted_l2_loss_v1(
+            curr_offset_mag,
+            initial_neighborhoods.distances,
+            initial_neighborhoods.weights,
+        )
+
+    @staticmethod
+    def _calculate_background_loss(
+        gaussian_cloud: GaussianCloud,
+        is_foreground: torch.Tensor,
+        initial_background: Background,
+    ):
+        bg_pts = gaussian_cloud.means_3d[~is_foreground]
+        bg_rot = gaussian_cloud.rotations[~is_foreground]
+        return l1_loss_v2(bg_pts, initial_background.means) + l1_loss_v2(
+            bg_rot, initial_background.rotations
+        )
+
+    @staticmethod
+    def _add_additional_losses(
+        losses: dict[str, torch.Tensor],
+        segmentation_mask_gaussian_cloud: GaussianCloud,
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        initial_background: Background,
+        initial_neighborhoods: Neighborhoods,
+        previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
+    ):
+        foreground_mask = (
+            gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][
+                :, 0
+            ]
+            > 0.5
+        ).detach()
+        foreground_means = segmentation_mask_gaussian_cloud.means_3d[foreground_mask]
+        foreground_rotations = segmentation_mask_gaussian_cloud.rotations[
+            foreground_mask
+        ]
+        relative_rotation_quaternion = quat_mult(
+            foreground_rotations,
+            previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
+        )
+        foreground_neighbor_means = foreground_means[initial_neighborhoods.indices]
+        foreground_offset_to_neighbors = (
+            foreground_neighbor_means - foreground_means[:, None]
+        )
+        losses["rigid"] = Create._calculate_rigidity_loss(
+            relative_rotation_quaternion=relative_rotation_quaternion,
+            foreground_offset_to_neighbors=foreground_offset_to_neighbors,
+            previous_offsets_to_neighbors=previous_timestep_gaussian_cloud_state.offsets_to_neighbors,
+            neighborhood_weights=initial_neighborhoods.weights,
+        )
+        losses["rot"] = weighted_l2_loss_v2(
+            relative_rotation_quaternion[initial_neighborhoods.indices],
+            relative_rotation_quaternion[:, None],
+            initial_neighborhoods.weights,
+        )
+        losses["iso"] = Create._calculate_isometry_loss(
+            foreground_offset_to_neighbors=foreground_offset_to_neighbors,
+            initial_neighborhoods=initial_neighborhoods,
+        )
+        losses["floor"] = torch.clamp(foreground_means[:, 1], min=0).mean()
+        losses["bg"] = Create._calculate_background_loss(
+            gaussian_cloud=segmentation_mask_gaussian_cloud,
+            is_foreground=foreground_mask,
+            initial_background=initial_background,
+        )
+        losses["soft_col_cons"] = l1_loss_v2(
+            gaussian_cloud_parameters[GaussianCloudParameterNames.colors],
+            previous_timestep_gaussian_cloud_state.colors,
+        )
+
+    @staticmethod
+    def _calculate_full_loss(
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        target_capture: Capture,
+        initial_background: Background,
+        initial_neighborhoods: Neighborhoods,
+        previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
+    ):
+        losses: dict[str, torch.Tensor] = {}
+        Create._add_image_loss(
+            losses=losses,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            target_capture=target_capture,
+        )
+        segmentation_mask_gaussian_cloud = Create._add_segmentation_loss(
+            losses=losses,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            target_capture=target_capture,
+        )
+        Create._add_additional_losses(
+            losses=losses,
+            segmentation_mask_gaussian_cloud=segmentation_mask_gaussian_cloud,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            initial_background=initial_background,
+            initial_neighborhoods=initial_neighborhoods,
+            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+        )
+
+        return Create._combine_losses(losses)
 
     def _set_absolute_paths(self):
         self.data_directory_path = os.path.abspath(self.data_directory_path)
         self.output_directory_path = os.path.abspath(self.output_directory_path)
 
-    def _initialize_parameters_and_variables(self, metadata):
+    def _initialize_parameters(self):
         initial_point_cloud = np.load(
             os.path.join(
                 self.data_directory_path,
@@ -461,9 +606,9 @@ class Create(Command):
         segmentation_masks = initial_point_cloud[:, 6]
         camera_count_limit = 50
         _, squared_distances = self._compute_knn_indices_and_squared_distances(
-            initial_point_cloud[:, :3], 3
+            numpy_point_cloud=initial_point_cloud[:, :3], k=3
         )
-        parameters = {
+        return {
             k: torch.nn.Parameter(
                 torch.tensor(v).cuda().float().contiguous().requires_grad_(True)
             )
@@ -498,30 +643,109 @@ class Create(Command):
                 ),
             }.items()
         }
-        camera_centers = np.linalg.inv(metadata["w2c"][0])[:, :3, 3]
-        return parameters, Variables(
-            max_2D_radius=torch.zeros(
-                parameters[GaussianCloudParameterNames.means].shape[0]
+
+    def _train_first_timestep(
+        self,
+        dataset_metadata,
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        optimizer: torch.optim.Adam,
+        scene_radius: float,
+    ):
+        densification_variables = self._create_densification_variables(
+            gaussian_cloud_parameters
+        )
+        timestep = 0
+        timestep_captures = load_timestep_captures(
+            dataset_metadata=dataset_metadata,
+            timestep=timestep,
+            data_directory_path=self.data_directory_path,
+            sequence_name=self.sequence_name,
+        )
+        timestep_capture_buffer = []
+        for i in tqdm(range(10_000), desc=f"timestep {timestep}"):
+            capture = get_random_element(
+                input_list=timestep_capture_buffer, fallback_list=timestep_captures
             )
-            .cuda()
-            .float(),
-            scene_radius=1.1
-            * np.max(
-                np.linalg.norm(
-                    camera_centers - np.mean(camera_centers, 0)[None], axis=-1
+            loss, densification_variables = self._calculate_image_and_segmentation_loss(
+                gaussian_cloud_parameters=gaussian_cloud_parameters,
+                target_capture=capture,
+                densification_variables=densification_variables,
+            )
+            wandb.log(
+                {
+                    f"timestep-{timestep}-loss": loss.item(),
+                }
+            )
+            loss.backward()
+            with torch.no_grad():
+                densify_gaussians(
+                    gaussian_cloud_parameters=gaussian_cloud_parameters,
+                    densification_variables=densification_variables,
+                    scene_radius=scene_radius,
+                    optimizer=optimizer,
+                    i=i,
                 )
-            ),
-            means2D_gradient_accum=torch.zeros(
-                parameters[GaussianCloudParameterNames.means].shape[0]
-            )
-            .cuda()
-            .float(),
-            denom=torch.zeros(parameters[GaussianCloudParameterNames.means].shape[0])
-            .cuda()
-            .float(),
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+        return self._initialize_post_first_timestep(
+            gaussian_cloud_parameters=gaussian_cloud_parameters, optimizer=optimizer
+        ), self._convert_parameters_to_numpy(
+            parameters=gaussian_cloud_parameters,
+            include_dynamic_parameters_only=False,
         )
 
-    def _save_sequence(self, gaussian_cloud_parameters_sequence):
+    def _train_timestep(
+        self,
+        timestep: int,
+        dataset_metadata,
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        initial_background: Background,
+        initial_neighborhoods: Neighborhoods,
+        previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
+        optimizer: torch.optim.Adam,
+    ):
+        timestep_captures = load_timestep_captures(
+            dataset_metadata=dataset_metadata,
+            timestep=timestep,
+            data_directory_path=self.data_directory_path,
+            sequence_name=self.sequence_name,
+        )
+        timestep_capture_buffer = []
+        self._update_variables_and_optimizer_and_gaussian_cloud_parameters(
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+            neighborhood_indices=initial_neighborhoods.indices,
+            optimizer=optimizer,
+        )
+        iteration_range = range(2000)
+        for _ in tqdm(iteration_range, desc=f"timestep {timestep}"):
+            capture = get_random_element(
+                input_list=timestep_capture_buffer, fallback_list=timestep_captures
+            )
+            loss = self._calculate_full_loss(
+                gaussian_cloud_parameters=gaussian_cloud_parameters,
+                target_capture=capture,
+                initial_background=initial_background,
+                initial_neighborhoods=initial_neighborhoods,
+                previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+            )
+            wandb.log(
+                {
+                    f"timestep-{timestep}-loss": loss.item(),
+                }
+            )
+            loss.backward()
+            with torch.no_grad():
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+        return self._convert_parameters_to_numpy(
+            parameters=gaussian_cloud_parameters,
+            include_dynamic_parameters_only=True,
+        )
+
+    def _save_sequence(
+        self, gaussian_cloud_parameters_sequence: list[dict[str, torch.nn.Parameter]]
+    ):
         to_save = {}
         for k in gaussian_cloud_parameters_sequence[0].keys():
             if k in gaussian_cloud_parameters_sequence[1].keys():
@@ -544,6 +768,7 @@ class Create(Command):
     def run(self):
         self._set_absolute_paths()
         torch.cuda.empty_cache()
+        gaussian_cloud_parameters = self._initialize_parameters()
         dataset_metadata = json.load(
             open(
                 os.path.join(
@@ -554,62 +779,38 @@ class Create(Command):
                 "r",
             )
         )
-        gaussian_cloud_parameters, variables = (
-            self._initialize_parameters_and_variables(dataset_metadata)
-        )
+        scene_radius = self._get_scene_radius(dataset_metadata)
         optimizer = self._create_optimizer(
-            gaussian_cloud_parameters, variables.external_scene_radius
+            parameters=gaussian_cloud_parameters, scene_radius=scene_radius
         )
         gaussian_cloud_parameters_sequence = []
-        timestep_count = get_timestep_count(self.timestep_count_limit, dataset_metadata)
-        for timestep in range(timestep_count):
-            timestep_captures = load_timestep_captures(
-                dataset_metadata, timestep, self.data_directory_path, self.sequence_name
+        timestep_count = get_timestep_count(
+            timestep_count_limit=self.timestep_count_limit,
+            dataset_metadata=dataset_metadata,
+        )
+        (
+            initial_background,
+            initial_neighborhoods,
+            previous,
+        ), new_gaussian_cloud_parameters = self._train_first_timestep(
+            dataset_metadata=dataset_metadata,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            optimizer=optimizer,
+            scene_radius=scene_radius,
+        )
+        gaussian_cloud_parameters_sequence.append(new_gaussian_cloud_parameters)
+        for timestep in range(1, timestep_count):
+            new_gaussian_cloud_parameters = self._train_timestep(
+                timestep=timestep,
+                dataset_metadata=dataset_metadata,
+                gaussian_cloud_parameters=gaussian_cloud_parameters,
+                initial_background=initial_background,
+                initial_neighborhoods=initial_neighborhoods,
+                previous_timestep_gaussian_cloud_state=previous,
+                optimizer=optimizer,
             )
-            timestep_capture_buffer = []
-            is_initial_timestep = timestep == 0
-            if not is_initial_timestep:
-                self._update_variables_and_optimizer_and_gaussian_cloud_parameters(
-                    gaussian_cloud_parameters, variables, optimizer
-                )
-            iteration_range = range(10000 if is_initial_timestep else 2000)
-            progress_bar = tqdm(iteration_range, desc=f"timestep {timestep}")
-            for i in iteration_range:
-                capture = get_random_element(
-                    input_list=timestep_capture_buffer, fallback_list=timestep_captures
-                )
-                loss = self._calculate_loss(
-                    gaussian_cloud_parameters=gaussian_cloud_parameters,
-                    target_capture=capture,
-                    variables=variables,
-                    calculate_only_subset_of_losses=is_initial_timestep,
-                )
-                wandb.log(
-                    {
-                        f"timestep-{timestep}-loss": loss.item(),
-                    }
-                )
-                loss.backward()
-                with torch.no_grad():
-                    if is_initial_timestep:
-                        densify_gaussians(
-                            gaussian_cloud_parameters, variables, optimizer, i
-                        )
-                    optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
-            progress_bar.close()
-            gaussian_cloud_parameters_sequence.append(
-                self._convert_parameters_to_numpy(
-                    parameters=gaussian_cloud_parameters,
-                    include_dynamic_parameters_only=not is_initial_timestep,
-                )
-            )
-            if is_initial_timestep:
-                self._initialize_post_first_timestep(
-                    gaussian_cloud_parameters, variables, optimizer
-                )
-            if not is_initial_timestep:
-                self._save_sequence(gaussian_cloud_parameters_sequence)
+            gaussian_cloud_parameters_sequence.append(new_gaussian_cloud_parameters)
+            self._save_sequence(gaussian_cloud_parameters_sequence)
 
 
 def main():

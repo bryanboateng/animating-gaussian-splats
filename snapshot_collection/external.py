@@ -21,7 +21,21 @@ import torch
 import torch.nn.functional as func
 from torch.autograd import Variable
 
-from commons.helpers import Variables
+from commons.helpers import GaussianCloudParameterNames
+
+
+class DensificationVariables:
+    def __init__(
+        self,
+        visibility_count: torch.Tensor,
+        mean_2d_gradients_accumulated,
+        max_2d_radii,
+    ):
+        self.visibility_count = visibility_count
+        self.mean_2d_gradients_accumulated = mean_2d_gradients_accumulated
+        self.max_2d_radii = max_2d_radii
+        self.gaussian_is_visible_mask = None
+        self.means_2d = None
 
 
 def build_rotation(q):
@@ -119,11 +133,18 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
         return ssim_map.mean(1).mean(1).mean(1)
 
 
-def accumulate_mean2d_gradient(variables: Variables):
-    variables.external_means2D_gradient_accum[variables.external_seen] += torch.norm(
-        variables.external_means2D.grad[variables.external_seen, :2], dim=-1
+def accumulate_mean_2d_gradients(densification_variables: DensificationVariables):
+    densification_variables.mean_2d_gradients_accumulated[
+        densification_variables.gaussian_is_visible_mask
+    ] += torch.norm(
+        densification_variables.means_2d.grad[
+            densification_variables.gaussian_is_visible_mask, :2
+        ],
+        dim=-1,
     )
-    variables.external_denom[variables.external_seen] += 1
+    densification_variables.visibility_count[
+        densification_variables.gaussian_is_visible_mask
+    ] += 1
 
 
 def update_params_and_optimizer(new_params, params, optimizer):
@@ -164,9 +185,22 @@ def cat_params_to_optimizer(new_params, params, optimizer):
             params[k] = group["params"][0]
 
 
-def remove_points(to_remove, params, variables: Variables, optimizer: torch.optim.Adam):
+def remove_points(
+    to_remove,
+    params,
+    densification_variables: DensificationVariables,
+    optimizer: torch.optim.Adam,
+):
     to_keep = ~to_remove
-    keys = [k for k in params.keys() if k not in ["cam_m", "cam_c"]]
+    keys = [
+        k
+        for k in params.keys()
+        if k
+        not in [
+            GaussianCloudParameterNames.camera_matrices,
+            GaussianCloudParameterNames.camera_centers,
+        ]
+    ]
     for k in keys:
         group = [g for g in optimizer.param_groups if g["name"] == k][0]
         stored_state = optimizer.state.get(group["params"][0], None)
@@ -184,92 +218,128 @@ def remove_points(to_remove, params, variables: Variables, optimizer: torch.opti
                 group["params"][0][to_keep].requires_grad_(True)
             )
             params[k] = group["params"][0]
-    variables.external_means2D_gradient_accum = (
-        variables.external_means2D_gradient_accum[to_keep]
+    densification_variables.mean_2d_gradients_accumulated = (
+        densification_variables.mean_2d_gradients_accumulated[to_keep]
     )
-    variables.external_denom = variables.external_denom[to_keep]
-    variables.external_max_2D_radius = variables.external_max_2D_radius[to_keep]
+    densification_variables.visibility_count = densification_variables.visibility_count[
+        to_keep
+    ]
+    densification_variables.max_2d_radii = densification_variables.max_2d_radii[to_keep]
 
 
 def inverse_sigmoid(x):
     return torch.log(x / (1 - x))
 
 
-def densify_gaussians(params, variables: Variables, optimizer, i):
+def densify_gaussians(
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    densification_variables: DensificationVariables,
+    scene_radius,
+    optimizer,
+    i,
+):
     if i <= 5000:
-        accumulate_mean2d_gradient(variables)
-        grad_thresh = 0.0002
+        accumulate_mean_2d_gradients(densification_variables)
+        gradient_threshold = 0.0002
         if (i >= 500) and (i % 100 == 0):
-            grads = variables.external_means2D_gradient_accum / variables.external_denom
-            grads[grads.isnan()] = 0.0
-            to_clone = torch.logical_and(
-                grads >= grad_thresh,
-                (
-                    torch.max(torch.exp(params["log_scales"]), dim=1).values
-                    <= 0.01 * variables.external_scene_radius
-                ),
+            average_gradients = (
+                densification_variables.mean_2d_gradients_accumulated
+                / densification_variables.visibility_count
+            )
+            average_gradients[average_gradients.isnan()] = 0.0
+
+            scales = torch.exp(gaussian_cloud_parameters["log_scales"])
+            max_scales = torch.max(scales, dim=1).values
+            scale_threshold = 0.01 * scene_radius
+            to_clone = (average_gradients >= gradient_threshold) & (
+                max_scales <= scale_threshold
             )
             new_params = {
-                k: v[to_clone] for k, v in params.items() if k not in ["cam_m", "cam_c"]
+                parameter_name: parameter[to_clone]
+                for parameter_name, parameter in gaussian_cloud_parameters.items()
+                if parameter_name
+                not in [
+                    GaussianCloudParameterNames.camera_matrices,
+                    GaussianCloudParameterNames.camera_centers,
+                ]
             }
-            cat_params_to_optimizer(new_params, params, optimizer)
-            num_pts = params["means3D"].shape[0]
+            cat_params_to_optimizer(new_params, gaussian_cloud_parameters, optimizer)
+            num_pts = gaussian_cloud_parameters["means3D"].shape[0]
 
-            padded_grad = torch.zeros(num_pts, device="cuda")
-            padded_grad[: grads.shape[0]] = grads
+            padded_gradients = torch.zeros(num_pts, device="cuda")
+            padded_gradients[: average_gradients.shape[0]] = average_gradients
             to_split = torch.logical_and(
-                padded_grad >= grad_thresh,
-                torch.max(torch.exp(params["log_scales"]), dim=1).values
-                > 0.01 * variables.external_scene_radius,
+                padded_gradients >= gradient_threshold,
+                torch.max(
+                    torch.exp(gaussian_cloud_parameters["log_scales"]), dim=1
+                ).values
+                > 0.01 * scene_radius,
             )
             n = 2  # number to split into
             new_params = {
                 k: v[to_split].repeat(n, 1)
-                for k, v in params.items()
-                if k not in ["cam_m", "cam_c"]
+                for k, v in gaussian_cloud_parameters.items()
+                if k
+                not in [
+                    GaussianCloudParameterNames.camera_matrices,
+                    GaussianCloudParameterNames.camera_centers,
+                ]
             }
-            stds = torch.exp(params["log_scales"])[to_split].repeat(n, 1)
+            stds = torch.exp(gaussian_cloud_parameters["log_scales"])[to_split].repeat(
+                n, 1
+            )
             means = torch.zeros((stds.size(0), 3), device="cuda")
             samples = torch.normal(mean=means, std=stds)
-            rots = build_rotation(params["unnorm_rotations"][to_split]).repeat(n, 1, 1)
+            rots = build_rotation(
+                gaussian_cloud_parameters["unnorm_rotations"][to_split]
+            ).repeat(n, 1, 1)
             new_params["means3D"] += torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
             new_params["log_scales"] = torch.log(
                 torch.exp(new_params["log_scales"]) / (0.8 * n)
             )
-            cat_params_to_optimizer(new_params, params, optimizer)
-            num_pts = params["means3D"].shape[0]
+            cat_params_to_optimizer(new_params, gaussian_cloud_parameters, optimizer)
+            num_pts = gaussian_cloud_parameters["means3D"].shape[0]
 
-            variables.external_means2D_gradient_accum = torch.zeros(
+            densification_variables.mean_2d_gradients_accumulated = torch.zeros(
                 num_pts, device="cuda"
             )
-            variables.external_denom = torch.zeros(num_pts, device="cuda")
-            variables.external_max_2D_radius = torch.zeros(num_pts, device="cuda")
+            densification_variables.visibility_count = torch.zeros(
+                num_pts, device="cuda"
+            )
+            densification_variables.max_2d_radii = torch.zeros(num_pts, device="cuda")
             to_remove = torch.cat(
                 (
                     to_split,
                     torch.zeros(n * to_split.sum(), dtype=torch.bool, device="cuda"),
                 )
             )
-            remove_points(to_remove, params, variables, optimizer)
+            remove_points(
+                to_remove, gaussian_cloud_parameters, densification_variables, optimizer
+            )
 
             remove_threshold = 0.25 if i == 5000 else 0.005
             to_remove = (
-                torch.sigmoid(params["logit_opacities"]) < remove_threshold
+                torch.sigmoid(gaussian_cloud_parameters["logit_opacities"])
+                < remove_threshold
             ).squeeze()
             if i >= 3000:
                 big_points_ws = (
-                    torch.exp(params["log_scales"]).max(dim=1).values
-                    > 0.1 * variables.external_scene_radius
+                    torch.exp(gaussian_cloud_parameters["log_scales"]).max(dim=1).values
+                    > 0.1 * scene_radius
                 )
                 to_remove = torch.logical_or(to_remove, big_points_ws)
-            remove_points(to_remove, params, variables, optimizer)
+            remove_points(
+                to_remove, gaussian_cloud_parameters, densification_variables, optimizer
+            )
 
             torch.cuda.empty_cache()
 
         if i > 0 and i % 3000 == 0:
             new_params = {
                 "logit_opacities": inverse_sigmoid(
-                    torch.ones_like(params["logit_opacities"]) * 0.01
+                    torch.ones_like(gaussian_cloud_parameters["logit_opacities"]) * 0.01
                 )
             }
-            update_params_and_optimizer(new_params, params, optimizer)
+            update_params_and_optimizer(
+                new_params, gaussian_cloud_parameters, optimizer
+            )
