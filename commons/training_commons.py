@@ -27,11 +27,11 @@ def get_timestep_count(timestep_count_limit, dataset_metadata):
 
 
 def load_timestep_captures(
-    dataset_metadata, timestamp: int, data_directory_path: str, sequence_name: str
+    dataset_metadata, timestep: int, data_directory_path: str, sequence_name: str
 ):
     timestep_data = []
-    for camera_index in range(len(dataset_metadata["fn"][timestamp])):
-        filename = dataset_metadata["fn"][timestamp][camera_index]
+    for camera_index in range(len(dataset_metadata["fn"][timestep])):
+        filename = dataset_metadata["fn"][timestep][camera_index]
         segmentation_mask = (
             torch.tensor(
                 np.array(
@@ -58,8 +58,8 @@ def load_timestep_captures(
                     image_height=dataset_metadata["h"],
                     near_clipping_plane_distance=1,
                     far_clipping_plane_distance=100,
-                    intrinsic_matrix=dataset_metadata["k"][timestamp][camera_index],
-                    extrinsic_matrix=dataset_metadata["w2c"][timestamp][camera_index],
+                    intrinsic_matrix=dataset_metadata["k"][timestep][camera_index],
+                    extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
                 ),
                 image=torch.tensor(
                     np.array(
