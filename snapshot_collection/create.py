@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 import open3d as o3d
 import torch
+import wandb
 from tqdm import tqdm
 
 from commons.command import Command
@@ -583,16 +584,13 @@ class Create(Command):
                     variables=variables,
                     calculate_only_subset_of_losses=is_initial_timestep,
                 )
+                wandb.log(
+                    {
+                        f"timestep-{timestep}-loss": loss.item(),
+                    }
+                )
                 loss.backward()
                 with torch.no_grad():
-                    report_interval = 100
-                    if i % report_interval == 0:
-                        self._report_progress(
-                            gaussian_cloud_parameters,
-                            timestep_captures[0],
-                            progress_bar,
-                            report_interval,
-                        )
                     if is_initial_timestep:
                         densify_gaussians(
                             gaussian_cloud_parameters, variables, optimizer, i
