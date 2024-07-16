@@ -3,6 +3,8 @@ import copy
 import torch
 from torch import nn
 
+from commons.classes import GaussianCloudParameterNames
+
 
 class DeformationNetwork(nn.Module):
     def __init__(self, sequence_length) -> None:
@@ -37,35 +39,26 @@ class DeformationNetwork(nn.Module):
 
 def update_parameters(deformation_network: DeformationNetwork, parameters, timestep):
     delta = deformation_network(
-        torch.cat((parameters["means"], parameters["rotations"]), dim=1),
+        torch.cat(
+            (
+                parameters[GaussianCloudParameterNames.means],
+                parameters[GaussianCloudParameterNames.rotation_quaternions],
+            ),
+            dim=1,
+        ),
         torch.tensor(timestep).cuda(),
     )
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
     updated_parameters = copy.deepcopy(parameters)
-    updated_parameters["means"] = updated_parameters["means"].detach()
-    updated_parameters["means"] += means_delta * 0.01
-    updated_parameters["rotations"] = updated_parameters["rotations"].detach()
-    updated_parameters["rotations"] += rotations_delta * 0.01
+    updated_parameters[GaussianCloudParameterNames.means] = updated_parameters[
+        GaussianCloudParameterNames.means
+    ].detach()
+    updated_parameters[GaussianCloudParameterNames.means] += means_delta * 0.01
+    updated_parameters[GaussianCloudParameterNames.rotation_quaternions] = (
+        updated_parameters[GaussianCloudParameterNames.rotation_quaternions].detach()
+    )
+    updated_parameters[GaussianCloudParameterNames.rotation_quaternions] += (
+        rotations_delta * 0.01
+    )
     return updated_parameters
-
-
-def create_gaussian_cloud(parameters):
-    return {
-        "means3D": parameters["means"],
-        "colors_precomp": parameters["colors"],
-        "rotations": torch.nn.functional.normalize(parameters["rotations"]),
-        "opacities": torch.sigmoid(parameters["opacities"]),
-        "scales": torch.exp(parameters["scales"]),
-        "means2D": torch.zeros_like(
-            parameters["means"], requires_grad=True, device="cuda"
-        )
-        + 0,
-    }
-
-
-def load_and_freeze_parameters(path: str):
-    parameters = torch.load(path)
-    for parameter in parameters.values():
-        parameter.requires_grad = False
-    return parameters

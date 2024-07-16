@@ -21,21 +21,10 @@ import torch
 import torch.nn.functional as func
 from torch.autograd import Variable
 
-from commons.helpers import GaussianCloudParameterNames
-
-
-class DensificationVariables:
-    def __init__(
-        self,
-        visibility_count: torch.Tensor,
-        mean_2d_gradients_accumulated,
-        max_2d_radii,
-    ):
-        self.visibility_count = visibility_count
-        self.mean_2d_gradients_accumulated = mean_2d_gradients_accumulated
-        self.max_2d_radii = max_2d_radii
-        self.gaussian_is_visible_mask = None
-        self.means_2d = None
+from commons.classes import (
+    DensificationVariables,
+    GaussianCloudParameterNames,
+)
 
 
 def build_rotation(q):

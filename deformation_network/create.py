@@ -1,29 +1,35 @@
 import json
 import os
-import shutil
 from dataclasses import dataclass, MISSING
 from datetime import datetime
 from random import randint
 from typing import Optional
 
+import numpy as np
 import torch
 import wandb
 from tqdm import tqdm
 
+import snapshot_collection.create
+from commons.classes import GaussianCloudParameterNames
 from commons.command import Command
-from commons.training_commons import (
+from commons.create_commons import (
     load_timestep_captures,
+    get_scene_radius,
+    create_optimizer,
+    convert_parameters_to_numpy,
     get_random_element,
-    Capture,
     get_timestep_count,
+    initialize_post_first_timestep,
+    initialize_parameters,
+    update_previous_timestep_gaussian_cloud_state,
+    train_first_timestep,
 )
-from deformation_network.common import (
+from commons.loss import calculate_full_loss
+from deformation_network.deformation_network import (
     update_parameters,
-    load_and_freeze_parameters,
     DeformationNetwork,
-    create_gaussian_cloud,
 )
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 
 @dataclass
@@ -36,45 +42,71 @@ class Create(Command):
     output_directory_path: str = "./deformation_networks"
 
     @staticmethod
-    def _get_loss(parameters, target_capture: Capture):
-        gaussian_cloud = create_gaussian_cloud(parameters)
-        # gaussian_cloud['means2D'].retain_grad()
-        (
-            rendered_image,
-            _,
-            _,
-        ) = Renderer(
-            raster_settings=target_capture.camera.gaussian_rasterization_settings
-        )(**gaussian_cloud)
-        return torch.nn.functional.l1_loss(rendered_image, target_capture.image)
+    def _update_previous_timestep_gaussian_cloud_state(
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        previous_timestep_gaussian_cloud_state: snapshot_collection.create.GaussianCloudReferenceState,
+        neighborhood_indices: torch.Tensor,
+    ):
+        current_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means]
+        current_rotations = torch.nn.functional.normalize(
+            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions]
+        )
+
+        update_previous_timestep_gaussian_cloud_state(
+            current_means,
+            current_rotations,
+            gaussian_cloud_parameters,
+            neighborhood_indices,
+            previous_timestep_gaussian_cloud_state,
+        )
 
     def _set_absolute_paths(self):
         self.data_directory_path = os.path.abspath(self.data_directory_path)
         self.output_directory_path = os.path.abspath(self.output_directory_path)
 
-    def _get_initial_gaussian_cloud_parameters_path(self):
-        return os.path.join(
-            self.data_directory_path,
-            self.sequence_name,
-            "params.pth",
+    def _train_first_timestep(
+        self,
+        dataset_metadata,
+        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    ):
+        scene_radius = get_scene_radius(dataset_metadata=dataset_metadata)
+        optimizer = create_optimizer(
+            parameters=gaussian_cloud_parameters, scene_radius=scene_radius
+        )
+        train_first_timestep(
+            data_directory_path=self.data_directory_path,
+            sequence_name=self.sequence_name,
+            dataset_metadata=dataset_metadata,
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            optimizer=optimizer,
+            scene_radius=scene_radius,
+            method="deformation-network",
+        )
+        return initialize_post_first_timestep(
+            gaussian_cloud_parameters=gaussian_cloud_parameters, optimizer=optimizer
         )
 
-    def _save_and_log_checkpoint(self, deformation_network, timestep_count):
+    def _save_and_log_checkpoint(
+        self, initial_gaussian_cloud_parameters, deformation_network, timestep_count
+    ):
         network_directory_path = os.path.join(
             self.output_directory_path,
             self.experiment_id,
             self.sequence_name,
         )
 
-        destination = os.path.join(
+        to_save = {}
+        parameters_numpy = convert_parameters_to_numpy(
+            initial_gaussian_cloud_parameters, False
+        )
+        for k in parameters_numpy.keys():
+            to_save[k] = parameters_numpy[k]
+        parameters_save_path = os.path.join(
             network_directory_path,
-            "initial_gaussian_cloud_parameters.pth",
+            "initial_gaussian_cloud_parameters.npz",
         )
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        shutil.copy(
-            self._get_initial_gaussian_cloud_parameters_path(),
-            destination,
-        )
+        os.makedirs(os.path.dirname(parameters_save_path), exist_ok=True)
+        np.savez(parameters_save_path, **to_save)
 
         with open(
             os.path.join(
@@ -109,10 +141,13 @@ class Create(Command):
         timestep_count,
         dataset_metadata,
         deformation_network,
-        parameters,
+        initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        initial_background: snapshot_collection.create.Background,
+        initial_neighborhoods: snapshot_collection.create.Neighborhoods,
+        previous_timestep_gaussian_cloud_state: snapshot_collection.create.GaussianCloudReferenceState,
         optimizer,
     ):
-        for timestep in range(timestep_count):
+        for timestep in range(1, timestep_count):
             timestep_capture_list = load_timestep_captures(
                 dataset_metadata, timestep, self.data_directory_path, self.sequence_name
             )
@@ -123,13 +158,19 @@ class Create(Command):
                     input_list=timestep_capture_buffer,
                     fallback_list=timestep_capture_list,
                 )
-                updated_parameters = update_parameters(
-                    deformation_network, parameters, timestep
+                updated_gaussian_cloud_parameters = update_parameters(
+                    deformation_network, initial_gaussian_cloud_parameters, timestep
                 )
-                loss = self._get_loss(updated_parameters, capture)
+                loss = calculate_full_loss(
+                    gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                    target_capture=capture,
+                    initial_background=initial_background,
+                    initial_neighborhoods=initial_neighborhoods,
+                    previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+                )
                 wandb.log(
                     {
-                        f"loss-{timestep}": loss.item(),
+                        f"timestep-{timestep}-loss-deformation-network": loss.item(),
                     }
                 )
                 loss.backward()
@@ -143,14 +184,27 @@ class Create(Command):
                     capture = timestep_capture_buffer.pop(
                         randint(0, len(timestep_capture_buffer) - 1)
                     )
-                    loss = self._get_loss(updated_parameters, capture)
+                    loss = calculate_full_loss(
+                        gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                        target_capture=capture,
+                        initial_background=initial_background,
+                        initial_neighborhoods=initial_neighborhoods,
+                        previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+                    )
                     losses.append(loss.item())
-            wandb.log({f"mean-losses": sum(losses) / len(losses)})
-            self._save_and_log_checkpoint(deformation_network, timestep_count)
+            wandb.log({f"mean-timestep-losses-deformation-network": sum(losses) / len(losses)})
+            self._save_and_log_checkpoint(
+                initial_gaussian_cloud_parameters, deformation_network, timestep_count
+            )
+            self._update_previous_timestep_gaussian_cloud_state(
+                gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+                neighborhood_indices=initial_neighborhoods.indices,
+            )
 
     def run(self):
         self._set_absolute_paths()
-        wandb.init(project="new-dynamic-gaussians")
+        wandb.init(project="4d-gaussian-splatting")
         dataset_metadata = json.load(
             open(
                 os.path.join(
@@ -165,15 +219,33 @@ class Create(Command):
         deformation_network = DeformationNetwork(timestep_count).cuda()
         optimizer = torch.optim.Adam(params=deformation_network.parameters(), lr=1e-3)
 
-        parameters = load_and_freeze_parameters(
-            self._get_initial_gaussian_cloud_parameters_path()
+        gaussian_cloud_parameters = initialize_parameters(
+            data_directory_path=self.data_directory_path,
+            sequence_name=self.sequence_name,
+        )
+
+        (
+            initial_background,
+            initial_neighborhoods,
+            previous_timestep_gaussian_cloud_state,
+        ) = self._train_first_timestep(dataset_metadata, gaussian_cloud_parameters)
+
+        for parameter in gaussian_cloud_parameters.values():
+            parameter.requires_grad = False
+        self._update_previous_timestep_gaussian_cloud_state(
+            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+            neighborhood_indices=initial_neighborhoods.indices,
         )
         self._train_in_sequential_order(
-            timestep_count,
-            dataset_metadata,
-            deformation_network,
-            parameters,
-            optimizer,
+            timestep_count=timestep_count,
+            dataset_metadata=dataset_metadata,
+            deformation_network=deformation_network,
+            initial_gaussian_cloud_parameters=gaussian_cloud_parameters,
+            initial_background=initial_background,
+            initial_neighborhoods=initial_neighborhoods,
+            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+            optimizer=optimizer,
         )
 
 

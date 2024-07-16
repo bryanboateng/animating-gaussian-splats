@@ -7,11 +7,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from commons.classes import GaussianCloudParameterNames
 from commons.command import Command
-from commons.helpers import (
-    GaussianCloudParameterNames,
-    render_and_increase_yaw,
-)
+from commons.view_commons import render_and_increase_yaw
 
 
 @dataclass

@@ -5,7 +5,6 @@ import numpy as np
 import torch
 
 from diff_gaussian_rasterization import GaussianRasterizationSettings
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 
 class GaussianCloudParameterNames:
@@ -17,32 +16,6 @@ class GaussianCloudParameterNames:
     log_scales = "log_scales"
     camera_matrices = "cam_m"
     camera_centers = "cam_c"
-
-
-def l1_loss_v1(x, y):
-    return torch.abs((x - y)).mean()
-
-
-def l1_loss_v2(x, y):
-    return (torch.abs(x - y).sum(-1)).mean()
-
-
-def weighted_l2_loss_v1(x, y, w):
-    return torch.sqrt(((x - y) ** 2) * w + 1e-20).mean()
-
-
-def weighted_l2_loss_v2(x, y, w):
-    return torch.sqrt(((x - y) ** 2).sum(-1) * w + 1e-20).mean()
-
-
-def quat_mult(q1, q2):
-    w1, x1, y1, z1 = q1.T
-    w2, x2, y2, z2 = q2.T
-    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
-    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
-    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
-    return torch.stack([w, x, y, z]).T
 
 
 class Camera:
@@ -157,75 +130,48 @@ class Camera:
         )
 
 
-def render_gaussians(
-    gaussians,
-    image_width,
-    image_height,
-    near_clipping_plane_distance,
-    far_clipping_plane_distance,
-    yaw,
-    distance_to_center,
-    height,
-    aspect_ratio,
-):
-    camera = Camera.from_parameters(
-        id_=0,
-        image_width=image_width,
-        image_height=image_height,
-        near_clipping_plane_distance=near_clipping_plane_distance,
-        far_clipping_plane_distance=far_clipping_plane_distance,
-        yaw=yaw,
-        distance_to_center=distance_to_center,
-        height=height,
-        aspect_ratio=aspect_ratio,
-    )
-    with torch.no_grad():
-        (
-            image,
-            _,
-            _,
-        ) = Renderer(
-            raster_settings=camera.gaussian_rasterization_settings
-        )(**gaussians)
-        return image
+class Capture:
+    def __init__(
+        self, camera: Camera, image: torch.Tensor, segmentation_mask: torch.Tensor
+    ):
+        self.camera = camera
+        self.image = image
+        self.segmentation_mask = segmentation_mask
 
 
-def render_and_increase_yaw(
-    gaussian_cloud,
-    render_images,
-    image_width,
-    image_height,
-    near_clipping_plane_distance,
-    far_clipping_plane_distance,
-    yaw,
-    yaw_degrees_per_second,
-    distance_to_center,
-    height,
-    aspect_ratio,
-    fps,
-):
-    render_images.append(
-        (
-            255
-            * np.clip(
-                render_gaussians(
-                    gaussian_cloud,
-                    image_width=image_width,
-                    image_height=image_height,
-                    near_clipping_plane_distance=near_clipping_plane_distance,
-                    far_clipping_plane_distance=far_clipping_plane_distance,
-                    yaw=yaw,
-                    distance_to_center=distance_to_center,
-                    height=height,
-                    aspect_ratio=aspect_ratio,
-                )
-                .cpu()
-                .numpy(),
-                0,
-                1,
-            )
-        )
-        .astype(np.uint8)
-        .transpose(1, 2, 0)
-    )
-    yaw += yaw_degrees_per_second / fps
+class Neighborhoods:
+    def __init__(
+        self, distances: torch.Tensor, weights: torch.Tensor, indices: torch.Tensor
+    ):
+        self.distances: torch.Tensor = distances
+        self.weights: torch.Tensor = weights
+        self.indices: torch.Tensor = indices
+
+
+class Background:
+    def __init__(self, means: torch.Tensor, rotations: torch.Tensor):
+        self.means: torch.Tensor = means
+        self.rotations: torch.Tensor = rotations
+
+
+class GaussianCloudReferenceState:
+    def __init__(self, means: torch.Tensor, rotations: torch.Tensor):
+        self.means: torch.Tensor = means
+        self.rotations: torch.Tensor = rotations
+        self.inverted_foreground_rotations: Optional[torch.Tensor] = None
+        self.offsets_to_neighbors: Optional[torch.Tensor] = None
+        self.colors: Optional[torch.Tensor] = None
+
+
+class DensificationVariables:
+    def __init__(
+        self,
+        visibility_count: torch.Tensor,
+        mean_2d_gradients_accumulated,
+        max_2d_radii,
+    ):
+        self.visibility_count = visibility_count
+        self.mean_2d_gradients_accumulated = mean_2d_gradients_accumulated
+        self.max_2d_radii = max_2d_radii
+        self.gaussian_is_visible_mask = None
+        self.means_2d = None
