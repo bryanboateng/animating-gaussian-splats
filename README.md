@@ -45,13 +45,13 @@ Natürlich, hier ist die überarbeitete Version auf Englisch:
 To create a snapshot collection, use the following command:
 
 ```bash
-python snapshot_collection.create sequence_name data_directory_path [options]
+python -m snapshot_collection.create sequence_name data_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python snapshot_collection.create -h
+python -m snapshot_collection.create -h
 ```
 
 #### Viewing a Snapshot Collection
@@ -59,13 +59,13 @@ python snapshot_collection.create -h
 To view the stored snapshot collection, use the following command:
 
 ```bash
-python snapshot_collection.view experiment_id sequence_name parameters_directory_path [options]
+python -m snapshot_collection.view experiment_id sequence_name parameters_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python snapshot_collection.view -h
+python -m snapshot_collection.view -h
 ```
 
 ### Deformation Network
@@ -75,13 +75,13 @@ python snapshot_collection.view -h
 To create a deformation network, use the following command:
 
 ```bash
-python deformation_network.create sequence_name data_directory_path [options]
+python -m deformation_network.create sequence_name data_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python deformation_network.create -h
+python -m deformation_network.create -h
 ```
 
 #### Viewing a Deformation Network
@@ -90,11 +90,11 @@ To view the sequence represented by the stored deformation network,
 use the following command:
 
 ```bash
-python deformation_network.view sequence_name data_directory_path [options]
+python -m deformation_network.view sequence_name data_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python deformation_network.view -h
+python -m deformation_network.view -h
 ```
