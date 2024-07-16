@@ -148,57 +148,6 @@ class Create(Command):
             wandb.log({f"mean-losses": sum(losses) / len(losses)})
             self._save_and_log_checkpoint(deformation_network, timestep_count)
 
-    def _train_in_random_order(
-        self,
-        timestep_count,
-        dataset_metadata,
-        deformation_network,
-        parameters,
-        optimizer,
-    ):
-        list_of_timestep_capture_lists = []
-        for timestep in range(timestep_count):
-            list_of_timestep_capture_lists += [
-                load_timestep_captures(
-                    dataset_metadata,
-                    timestep,
-                    self.data_directory_path,
-                    self.sequence_name,
-                )
-            ]
-        for _ in tqdm(range(10_000)):
-            random_timestep = torch.randint(
-                0, len(list_of_timestep_capture_lists), (1,)
-            )
-            random_camera_index = torch.randint(
-                0, len(list_of_timestep_capture_lists[0]), (1,)
-            )
-            capture = list_of_timestep_capture_lists[random_timestep][
-                random_camera_index
-            ]
-
-            updated_parameters = update_parameters(
-                deformation_network, parameters, random_timestep
-            )
-            loss = self._get_loss(updated_parameters, capture)
-            wandb.log(
-                {
-                    f"loss-new": loss.item(),
-                }
-            )
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-        for timestep_capture_list in list_of_timestep_capture_lists:
-            losses = []
-            with torch.no_grad():
-                for capture in timestep_capture_list:
-                    loss = self._get_loss(updated_parameters, capture)
-                    losses.append(loss.item())
-
-            wandb.log({f"mean-losses-new": sum(losses) / len(losses)})
-        self._save_and_log_checkpoint(deformation_network, timestep_count)
-
     def run(self):
         self._set_absolute_paths()
         wandb.init(project="new-dynamic-gaussians")
@@ -220,14 +169,6 @@ class Create(Command):
             self._get_initial_gaussian_cloud_parameters_path()
         )
         self._train_in_sequential_order(
-            timestep_count,
-            dataset_metadata,
-            deformation_network,
-            parameters,
-            optimizer,
-        )
-
-        self._train_in_random_order(
             timestep_count,
             dataset_metadata,
             deformation_network,
