@@ -153,7 +153,7 @@ class Create(Command):
             )
             timestep_capture_buffer = []
 
-            for _ in tqdm(range(10_000)):
+            for _ in tqdm(range(10_000), desc=f"timestep {timestep}"):
                 capture = get_random_element(
                     input_list=timestep_capture_buffer,
                     fallback_list=timestep_capture_list,
