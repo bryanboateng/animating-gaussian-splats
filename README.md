@@ -34,8 +34,6 @@ To run the scripts locally, ensure you have the following prerequisites:
    pip install -r requirements.txt
    ```
 
-Natürlich, hier ist die überarbeitete Version auf Englisch:
-
 ## Scripts
 
 ### Snapshot Collection
