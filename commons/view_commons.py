@@ -4,6 +4,9 @@ import torch
 from commons.classes import Camera
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
+from PIL import Image
+
+import time
 
 def _render_gaussians(
     gaussians,
@@ -51,8 +54,8 @@ def render_and_increase_yaw(
     height,
     aspect_ratio,
     fps,
-):
-    render_images.append(
+):    
+    rendering = (
         (
             255
             * np.clip(
@@ -76,4 +79,6 @@ def render_and_increase_yaw(
         .astype(np.uint8)
         .transpose(1, 2, 0)
     )
+    render_images.append(rendering)
+
     yaw += yaw_degrees_per_second / fps

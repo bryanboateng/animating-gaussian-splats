@@ -47,9 +47,9 @@ class Create(Command):
         previous_timestep_gaussian_cloud_state: snapshot_collection.create.GaussianCloudReferenceState,
         neighborhood_indices: torch.Tensor,
     ):
-        current_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means]
+        current_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means].detach().clone()
         current_rotations = torch.nn.functional.normalize(
-            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions]
+            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions].detach().clone()
         )
 
         update_previous_timestep_gaussian_cloud_state(
@@ -153,7 +153,8 @@ class Create(Command):
             )
             timestep_capture_buffer = []
 
-            for _ in tqdm(range(10_000), desc=f"timestep {timestep}"):
+            iters = 15_000 if timestep == 1 else 5_000
+            for _ in tqdm(range(iters), desc=f"timestep {timestep}"):
                 capture = get_random_element(
                     input_list=timestep_capture_buffer,
                     fallback_list=timestep_capture_list,

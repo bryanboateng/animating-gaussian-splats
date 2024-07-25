@@ -15,6 +15,7 @@ from deformation_network.deformation_network import (
     DeformationNetwork,
 )
 
+from PIL import Image
 
 @dataclass
 class View(Command):
@@ -122,6 +123,7 @@ class View(Command):
         deformation_network.eval()
 
         for timestep in tqdm(range(timestep_count), desc="Rendering progress"):
+            print('Timestep:', timestep)
             timestep_gaussian_cloud_parameters = self._get_timestep_parameters(
                 deformation_network,
                 initial_gaussian_cloud_parameters,
@@ -150,6 +152,11 @@ class View(Command):
             self.experiment_id,
             f"{self.sequence_name}.mp4",
         )
+
+        # for i, im in enumerate(render_images):
+        #     print(len(render_images))
+        #     Image.fromarray(im).save(f'hello_world_{i}.png')
+
         os.makedirs(os.path.dirname(rendered_sequence_path), exist_ok=True)
         imageio.mimwrite(
             rendered_sequence_path,

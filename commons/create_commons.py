@@ -331,17 +331,16 @@ def update_previous_timestep_gaussian_cloud_state(
         foreground_means[neighborhood_indices] - foreground_means[:, None]
     )
     previous_timestep_gaussian_cloud_state.inverted_foreground_rotations = (
-        inverted_foreground_rotations.detach()
+        inverted_foreground_rotations.detach().clone()
     )
     previous_timestep_gaussian_cloud_state.offsets_to_neighbors = (
-        offsets_to_neighbors.detach()
+        offsets_to_neighbors.detach().clone()
     )
     previous_timestep_gaussian_cloud_state.colors = gaussian_cloud_parameters[
         GaussianCloudParameterNames.colors
-    ].detach()
-    previous_timestep_gaussian_cloud_state.means = current_means.detach()
-    previous_timestep_gaussian_cloud_state.rotations = current_rotations.detach()
-
+    ].detach().clone()
+    previous_timestep_gaussian_cloud_state.means = current_means.detach().clone()
+    previous_timestep_gaussian_cloud_state.rotations = current_rotations.detach().clone()
 
 def train_first_timestep(
     data_directory_path,
