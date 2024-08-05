@@ -1,4 +1,5 @@
 import torch
+import wandb
 
 from commons.classes import (
     Background,
@@ -9,7 +10,7 @@ from commons.classes import (
     Neighborhoods,
 )
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
-from snapshot_collection.external import (
+from external import (
     calc_ssim,
     build_rotation,
 )
@@ -174,9 +175,12 @@ def _combine_losses(losses: dict[str, torch.Tensor]):
         "bg": 20.0,
         "soft_col_cons": 0.01,
     }
-    return torch.sum(
-        torch.stack(([torch.tensor(loss_weights[k]) * v for k, v in losses.items()]))
-    )
+    weighted_losses = []
+    for name, value in losses.items():
+        weighted_loss = torch.tensor(loss_weights[name]) * value
+        wandb.log({f"{name}-loss": weighted_loss})
+        weighted_losses.append(weighted_loss)
+    return torch.sum(torch.stack(weighted_losses))
 
 
 def calculate_image_and_segmentation_loss(

@@ -10,7 +10,7 @@ from tqdm import tqdm
 from commons.classes import GaussianCloudParameterNames
 from commons.command import Command
 from commons.view_commons import render_and_increase_yaw
-from deformation_network.deformation_network import (
+from deformation_network import (
     update_parameters,
     DeformationNetwork,
 )
