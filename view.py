@@ -5,11 +5,11 @@ from dataclasses import dataclass, MISSING
 import imageio
 import numpy as np
 import torch
+from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from tqdm import tqdm
 
-from commons.classes import GaussianCloudParameterNames
+from commons.classes import GaussianCloudParameterNames, Camera
 from commons.command import Command
-from commons.view_commons import render_and_increase_yaw
 from deformation_network import (
     update_parameters,
     DeformationNetwork,
@@ -130,20 +130,38 @@ class View(Command):
             gaussian_cloud = self._create_gaussian_cloud(
                 timestep_gaussian_cloud_parameters
             )
-            render_and_increase_yaw(
-                gaussian_cloud=gaussian_cloud,
-                render_images=render_images,
+            camera = Camera.from_parameters(
+                id_=0,
                 image_width=self.image_width,
                 image_height=self.image_height,
                 near_clipping_plane_distance=self.near_clipping_plane_distance,
                 far_clipping_plane_distance=self.far_clipping_plane_distance,
                 yaw=yaw,
-                yaw_degrees_per_second=self.yaw_degrees_per_second,
                 distance_to_center=self.distance_to_center,
                 height=self.height,
                 aspect_ratio=self.aspect_ratio,
-                fps=self.fps,
             )
+            with torch.no_grad():
+                (
+                    image,
+                    _,
+                    _,
+                ) = Renderer(
+                    raster_settings=camera.gaussian_rasterization_settings
+                )(**gaussian_cloud)
+                render_images.append(
+                    (
+                        255
+                        * np.clip(
+                            image.cpu().numpy(),
+                            0,
+                            1,
+                        )
+                    )
+                    .astype(np.uint8)
+                    .transpose(1, 2, 0)
+                )
+            yaw += self.yaw_degrees_per_second / self.fps
 
         rendered_sequence_path = os.path.join(
             self.rendered_sequence_directory_path,
