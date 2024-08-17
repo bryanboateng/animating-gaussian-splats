@@ -281,7 +281,9 @@ class Create(Command):
         )
         timestep_count = self._get_timestep_count(dataset_metadata)
         deformation_network = DeformationNetwork(timestep_count).cuda()
-        optimizer = torch.optim.Adam(params=deformation_network.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.Adam(
+            params=deformation_network.parameters(), lr=self.learning_rate
+        )
 
         initial_gaussian_cloud_parameters = self._load_densified_initial_parameters()
 
