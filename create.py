@@ -200,17 +200,40 @@ class Create(Command):
             base_path=self.output_directory_path,
         )
 
-    def _train_in_sequential_order(
-        self,
-        timestep_count,
-        dataset_metadata,
-        deformation_network,
-        initial_gaussian_cloud_parameters: GaussianCloudParameters,
-        initial_background: Background,
-        initial_neighborhoods: Neighborhoods,
-        previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
-        optimizer,
-    ):
+    def run(self):
+        self._set_absolute_paths()
+        wandb.init(project="4d-gaussian-splatting")
+        dataset_metadata = json.load(
+            open(
+                os.path.join(
+                    self.data_directory_path,
+                    self.sequence_name,
+                    "train_meta.json",
+                ),
+                "r",
+            )
+        )
+        timestep_count = self._get_timestep_count(dataset_metadata)
+        deformation_network = DeformationNetwork(timestep_count).cuda()
+        optimizer = torch.optim.Adam(
+            params=deformation_network.parameters(), lr=self.learning_rate
+        )
+
+        initial_gaussian_cloud_parameters = self._load_densified_initial_parameters()
+
+        (
+            initial_background,
+            initial_neighborhoods,
+            previous_timestep_gaussian_cloud_state,
+        ) = self.initialize_post_first_timestep(
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters
+        )
+
+        self._update_previous_timestep_gaussian_cloud_state(
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+            neighborhood_indices=initial_neighborhoods.indices,
+        )
         for timestep in range(1, timestep_count):
             timestep_capture_list = load_timestep_captures(
                 dataset_metadata, timestep, self.data_directory_path, self.sequence_name
@@ -265,51 +288,6 @@ class Create(Command):
                 previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
                 neighborhood_indices=initial_neighborhoods.indices,
             )
-
-    def run(self):
-        self._set_absolute_paths()
-        wandb.init(project="4d-gaussian-splatting")
-        dataset_metadata = json.load(
-            open(
-                os.path.join(
-                    self.data_directory_path,
-                    self.sequence_name,
-                    "train_meta.json",
-                ),
-                "r",
-            )
-        )
-        timestep_count = self._get_timestep_count(dataset_metadata)
-        deformation_network = DeformationNetwork(timestep_count).cuda()
-        optimizer = torch.optim.Adam(
-            params=deformation_network.parameters(), lr=self.learning_rate
-        )
-
-        initial_gaussian_cloud_parameters = self._load_densified_initial_parameters()
-
-        (
-            initial_background,
-            initial_neighborhoods,
-            previous_timestep_gaussian_cloud_state,
-        ) = self.initialize_post_first_timestep(
-            gaussian_cloud_parameters=initial_gaussian_cloud_parameters
-        )
-
-        self._update_previous_timestep_gaussian_cloud_state(
-            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
-            neighborhood_indices=initial_neighborhoods.indices,
-        )
-        self._train_in_sequential_order(
-            timestep_count=timestep_count,
-            dataset_metadata=dataset_metadata,
-            deformation_network=deformation_network,
-            initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            initial_background=initial_background,
-            initial_neighborhoods=initial_neighborhoods,
-            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
-            optimizer=optimizer,
-        )
 
 
 def main():
