@@ -35,6 +35,7 @@ class Create(Command):
     sequence_name: str = MISSING
     data_directory_path: str = MISSING
     experiment_id: str = datetime.utcnow().isoformat() + "Z"
+    learning_rate: float = 1e-3
     timestep_count_limit: Optional[int] = None
     output_directory_path: str = "./deformation_networks"
 
@@ -132,7 +133,7 @@ class Create(Command):
         self.data_directory_path = os.path.abspath(self.data_directory_path)
         self.output_directory_path = os.path.abspath(self.output_directory_path)
 
-    def get_timestep_count(self, dataset_metadata):
+    def _get_timestep_count(self, dataset_metadata):
         sequence_length = len(dataset_metadata["fn"])
         if self.timestep_count_limit is None:
             return sequence_length
@@ -278,22 +279,22 @@ class Create(Command):
                 "r",
             )
         )
-        timestep_count = self.get_timestep_count(dataset_metadata)
+        timestep_count = self._get_timestep_count(dataset_metadata)
         deformation_network = DeformationNetwork(timestep_count).cuda()
-        optimizer = torch.optim.Adam(params=deformation_network.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(params=deformation_network.parameters(), lr=self.learning_rate)
 
-        gaussian_cloud_parameters = self._load_densified_initial_parameters()
+        initial_gaussian_cloud_parameters = self._load_densified_initial_parameters()
 
         (
             initial_background,
             initial_neighborhoods,
             previous_timestep_gaussian_cloud_state,
         ) = self.initialize_post_first_timestep(
-            gaussian_cloud_parameters=gaussian_cloud_parameters
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters
         )
 
         self._update_previous_timestep_gaussian_cloud_state(
-            gaussian_cloud_parameters=gaussian_cloud_parameters,
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
             neighborhood_indices=initial_neighborhoods.indices,
         )
@@ -301,7 +302,7 @@ class Create(Command):
             timestep_count=timestep_count,
             dataset_metadata=dataset_metadata,
             deformation_network=deformation_network,
-            initial_gaussian_cloud_parameters=gaussian_cloud_parameters,
+            initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             initial_background=initial_background,
             initial_neighborhoods=initial_neighborhoods,
             previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
