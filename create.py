@@ -17,9 +17,9 @@ from commons.classes import (
     Capture,
     Camera,
     DensificationVariables,
+    GaussianCloudParameters,
 )
 from commons.classes import (
-    GaussianCloudParameterNames,
     GaussianCloudReferenceState,
     Neighborhoods,
     Background,
@@ -64,6 +64,12 @@ class Create(Command):
         return np.array(indices_list), np.array(squared_distances_list)
 
     @staticmethod
+    def _create_trainable_parameter(v):
+        return torch.nn.Parameter(
+            torch.tensor(v).cuda().float().contiguous().requires_grad_(True)
+        )
+
+    @staticmethod
     def get_scene_radius(dataset_metadata):
         camera_centers = np.linalg.inv(dataset_metadata["w2c"][0])[:, :3, 3]
         scene_radius = 1.1 * np.max(
@@ -72,23 +78,49 @@ class Create(Command):
         return scene_radius
 
     @staticmethod
-    def create_optimizer(
-        parameters: dict[str, torch.nn.Parameter], scene_radius: float
-    ):
-        learning_rates = {
-            GaussianCloudParameterNames.means: 0.00016 * scene_radius,
-            GaussianCloudParameterNames.colors: 0.0025,
-            GaussianCloudParameterNames.segmentation_masks: 0.0,
-            GaussianCloudParameterNames.rotation_quaternions: 0.001,
-            GaussianCloudParameterNames.opacities_logits: 0.05,
-            GaussianCloudParameterNames.log_scales: 0.001,
-            GaussianCloudParameterNames.camera_matrices: 1e-4,
-            GaussianCloudParameterNames.camera_centers: 1e-4,
-        }
+    def create_optimizer(parameters: GaussianCloudParameters, scene_radius: float):
         return torch.optim.Adam(
             [
-                {"params": [value], "name": name, "lr": learning_rates[name]}
-                for name, value in parameters.items()
+                {
+                    "params": [parameters.means],
+                    "name": "means",
+                    "lr": 0.00016 * scene_radius,
+                },
+                {
+                    "params": [parameters.rgb_colors],
+                    "name": "rgb_colors",
+                    "lr": 0.0025,
+                },
+                {
+                    "params": [parameters.segmentation_colors],
+                    "name": "segmentation_colors",
+                    "lr": 0.0,
+                },
+                {
+                    "params": [parameters.rotation_quaternions],
+                    "name": "rotation_quaternions",
+                    "lr": 0.001,
+                },
+                {
+                    "params": [parameters.opacities_logits],
+                    "name": "opacities_logits",
+                    "lr": 0.05,
+                },
+                {
+                    "params": [parameters.log_scales],
+                    "name": "log_scales",
+                    "lr": 0.001,
+                },
+                {
+                    "params": [parameters.camera_matrices],
+                    "name": "camera_matrices",
+                    "lr": 1e-4,
+                },
+                {
+                    "params": [parameters.camera_centers],
+                    "name": "camera_centers",
+                    "lr": 1e-4,
+                },
             ],
             lr=0.0,
             eps=1e-15,
@@ -96,22 +128,18 @@ class Create(Command):
 
     @staticmethod
     def _create_densification_variables(
-        gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
+        gaussian_cloud_parameters: GaussianCloudParameters,
     ):
         densification_variables = DensificationVariables(
-            visibility_count=torch.zeros(
-                gaussian_cloud_parameters[GaussianCloudParameterNames.means].shape[0]
-            )
+            visibility_count=torch.zeros(gaussian_cloud_parameters.means.shape[0])
             .cuda()
             .float(),
             mean_2d_gradients_accumulated=torch.zeros(
-                gaussian_cloud_parameters[GaussianCloudParameterNames.means].shape[0]
+                gaussian_cloud_parameters.means.shape[0]
             )
             .cuda()
             .float(),
-            max_2d_radii=torch.zeros(
-                gaussian_cloud_parameters[GaussianCloudParameterNames.means].shape[0]
-            )
+            max_2d_radii=torch.zeros(gaussian_cloud_parameters.means.shape[0])
             .cuda()
             .float(),
         )
@@ -192,25 +220,14 @@ class Create(Command):
 
     @staticmethod
     def initialize_post_first_timestep(
-        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        gaussian_cloud_parameters: GaussianCloudParameters,
     ):
 
-        foreground_mask = (
-            gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][
-                :, 0
-            ]
-            > 0.5
-        )
-        foreground_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means][
-            foreground_mask
-        ]
-        background_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means][
-            ~foreground_mask
-        ]
+        foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
+        foreground_means = gaussian_cloud_parameters.means[foreground_mask]
+        background_means = gaussian_cloud_parameters.means[~foreground_mask]
         background_rotations = torch.nn.functional.normalize(
-            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions][
-                ~foreground_mask
-            ]
+            gaussian_cloud_parameters.rotation_quaternions[~foreground_mask]
         )
         neighbor_indices_list, neighbor_squared_distances_list = (
             Create._compute_knn_indices_and_squared_distances(
@@ -238,11 +255,9 @@ class Create(Command):
         )
 
         previous_timestep_gaussian_cloud_state = GaussianCloudReferenceState(
-            means=gaussian_cloud_parameters[GaussianCloudParameterNames.means].detach(),
+            means=gaussian_cloud_parameters.means.detach(),
             rotations=torch.nn.functional.normalize(
-                gaussian_cloud_parameters[
-                    GaussianCloudParameterNames.rotation_quaternions
-                ]
+                gaussian_cloud_parameters.rotation_quaternions
             ).detach(),
         )
 
@@ -258,21 +273,16 @@ class Create(Command):
 
     @staticmethod
     def _update_previous_timestep_gaussian_cloud_state(
-        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        gaussian_cloud_parameters: GaussianCloudParameters,
         previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
         neighborhood_indices: torch.Tensor,
     ):
-        current_means = gaussian_cloud_parameters[GaussianCloudParameterNames.means]
+        current_means = gaussian_cloud_parameters.means
         current_rotations = torch.nn.functional.normalize(
-            gaussian_cloud_parameters[GaussianCloudParameterNames.rotation_quaternions]
+            gaussian_cloud_parameters.rotation_quaternions
         )
 
-        foreground_mask = (
-            gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][
-                :, 0
-            ]
-            > 0.5
-        )
+        foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
         inverted_foreground_rotations = Create._get_inverted_foreground_rotations(
             current_rotations, foreground_mask
         )
@@ -286,31 +296,11 @@ class Create(Command):
         previous_timestep_gaussian_cloud_state.offsets_to_neighbors = (
             offsets_to_neighbors.detach()
         )
-        previous_timestep_gaussian_cloud_state.colors = gaussian_cloud_parameters[
-            GaussianCloudParameterNames.colors
-        ].detach()
+        previous_timestep_gaussian_cloud_state.colors = (
+            gaussian_cloud_parameters.rgb_colors.detach()
+        )
         previous_timestep_gaussian_cloud_state.means = current_means.detach()
         previous_timestep_gaussian_cloud_state.rotations = current_rotations.detach()
-
-    @staticmethod
-    def convert_parameters_to_numpy(
-        parameters: dict[str, torch.nn.Parameter], include_dynamic_parameters_only: bool
-    ):
-        if include_dynamic_parameters_only:
-            return {
-                k: v.detach().cpu().contiguous().numpy()
-                for k, v in parameters.items()
-                if k
-                in [
-                    GaussianCloudParameterNames.means,
-                    GaussianCloudParameterNames.colors,
-                    GaussianCloudParameterNames.rotation_quaternions,
-                ]
-            }
-        else:
-            return {
-                k: v.detach().cpu().contiguous().numpy() for k, v in parameters.items()
-            }
 
     def _set_absolute_paths(self):
         self.data_directory_path = os.path.abspath(self.data_directory_path)
@@ -336,46 +326,45 @@ class Create(Command):
         _, squared_distances = self._compute_knn_indices_and_squared_distances(
             numpy_point_cloud=initial_point_cloud[:, :3], k=3
         )
-        return {
-            k: torch.nn.Parameter(
-                torch.tensor(v).cuda().float().contiguous().requires_grad_(True)
-            )
-            for k, v in {
-                GaussianCloudParameterNames.means: initial_point_cloud[:, :3],
-                GaussianCloudParameterNames.colors: initial_point_cloud[:, 3:6],
-                GaussianCloudParameterNames.segmentation_masks: np.stack(
+        return GaussianCloudParameters(
+            means=Create._create_trainable_parameter(initial_point_cloud[:, :3]),
+            rgb_colors=Create._create_trainable_parameter(initial_point_cloud[:, 3:6]),
+            segmentation_colors=Create._create_trainable_parameter(
+                np.stack(
                     (
                         segmentation_masks,
                         np.zeros_like(segmentation_masks),
                         1 - segmentation_masks,
                     ),
                     -1,
-                ),
-                GaussianCloudParameterNames.rotation_quaternions: np.tile(
-                    [1, 0, 0, 0], (segmentation_masks.shape[0], 1)
-                ),
-                GaussianCloudParameterNames.opacities_logits: np.zeros(
-                    (segmentation_masks.shape[0], 1)
-                ),
-                GaussianCloudParameterNames.log_scales: np.tile(
+                )
+            ),
+            rotation_quaternions=Create._create_trainable_parameter(
+                np.tile([1, 0, 0, 0], (segmentation_masks.shape[0], 1))
+            ),
+            opacities_logits=Create._create_trainable_parameter(
+                np.zeros((segmentation_masks.shape[0], 1))
+            ),
+            log_scales=Create._create_trainable_parameter(
+                np.tile(
                     np.log(np.sqrt(squared_distances.mean(-1).clip(min=0.0000001)))[
                         ..., None
                     ],
                     (1, 3),
-                ),
-                GaussianCloudParameterNames.camera_matrices: np.zeros(
-                    (camera_count_limit, 3)
-                ),
-                GaussianCloudParameterNames.camera_centers: np.zeros(
-                    (camera_count_limit, 3)
-                ),
-            }.items()
-        }
+                )
+            ),
+            camera_matrices=Create._create_trainable_parameter(
+                np.zeros((camera_count_limit, 3))
+            ),
+            camera_centers=Create._create_trainable_parameter(
+                np.zeros((camera_count_limit, 3))
+            ),
+        )
 
     def _train_first_timestep(
         self,
         dataset_metadata,
-        gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        gaussian_cloud_parameters: GaussianCloudParameters,
     ):
         scene_radius = self.get_scene_radius(dataset_metadata=dataset_metadata)
         optimizer = self.create_optimizer(
@@ -421,12 +410,15 @@ class Create(Command):
     def get_densified_initial_gaussian_cloud_parameters(self, dataset_metadata):
         gaussian_cloud_parameters = self.initialize_parameters()
         self._train_first_timestep(dataset_metadata, gaussian_cloud_parameters)
-        for parameter in gaussian_cloud_parameters.values():
+        for parameter in gaussian_cloud_parameters.__dict__.values():
             parameter.requires_grad = False
         return gaussian_cloud_parameters
 
     def _save_and_log_checkpoint(
-        self, initial_gaussian_cloud_parameters, deformation_network, timestep_count
+        self,
+        initial_gaussian_cloud_parameters: GaussianCloudParameters,
+        deformation_network: DeformationNetwork,
+        timestep_count: int,
     ):
         network_directory_path = os.path.join(
             self.output_directory_path,
@@ -434,18 +426,12 @@ class Create(Command):
             self.sequence_name,
         )
 
-        to_save = {}
-        parameters_numpy = self.convert_parameters_to_numpy(
-            initial_gaussian_cloud_parameters, False
-        )
-        for k in parameters_numpy.keys():
-            to_save[k] = parameters_numpy[k]
         parameters_save_path = os.path.join(
             network_directory_path,
-            "initial_gaussian_cloud_parameters.npz",
+            "densified_gaussian_cloud_parameters.pth",
         )
         os.makedirs(os.path.dirname(parameters_save_path), exist_ok=True)
-        np.savez(parameters_save_path, **to_save)
+        torch.save(initial_gaussian_cloud_parameters, parameters_save_path)
 
         with open(
             os.path.join(
@@ -480,7 +466,7 @@ class Create(Command):
         timestep_count,
         dataset_metadata,
         deformation_network,
-        initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+        initial_gaussian_cloud_parameters: GaussianCloudParameters,
         initial_background: Background,
         initial_neighborhoods: Neighborhoods,
         previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,

@@ -1,15 +1,15 @@
 import torch
 import wandb
+from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from commons.classes import (
     Background,
     Capture,
     DensificationVariables,
-    GaussianCloudParameterNames,
     GaussianCloudReferenceState,
     Neighborhoods,
+    GaussianCloudParameters,
 )
-from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from external import (
     calc_ssim,
     build_rotation,
@@ -17,24 +17,20 @@ from external import (
 
 
 class GaussianCloud:
-    def __init__(self, parameters: dict[str, torch.nn.Parameter]):
+    def __init__(self, parameters: GaussianCloudParameters):
         self.means_2d = (
             torch.zeros_like(
-                parameters[GaussianCloudParameterNames.means],
+                parameters.means,
                 requires_grad=True,
                 device="cuda",
             )
             + 0
         )
-        self.means_3d = parameters[GaussianCloudParameterNames.means]
-        self.colors = parameters[GaussianCloudParameterNames.colors]
-        self.rotations = torch.nn.functional.normalize(
-            parameters[GaussianCloudParameterNames.rotation_quaternions]
-        )
-        self.opacities = torch.sigmoid(
-            parameters[GaussianCloudParameterNames.opacities_logits]
-        )
-        self.scales = torch.exp(parameters[GaussianCloudParameterNames.log_scales])
+        self.means_3d = parameters.means
+        self.colors = parameters.rgb_colors
+        self.rotations = torch.nn.functional.normalize(parameters.rotation_quaternions)
+        self.opacities = torch.sigmoid(parameters.opacities_logits)
+        self.scales = torch.exp(parameters.log_scales)
 
     def get_renderer_format(self):
         return {
@@ -65,12 +61,10 @@ def _weighted_l2_loss_v2(x, y, w):
 
 def _apply_exponential_transform_and_center_to_image(
     image: torch.Tensor,
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     camera_id: int,
 ):
-    camera_matrices = gaussian_cloud_parameters[
-        GaussianCloudParameterNames.camera_matrices
-    ][camera_id]
+    camera_matrices = gaussian_cloud_parameters.camera_matrices[camera_id]
 
     # Apply exponential transformation to the camera matrix parameters.
     # The exponential function ensures all values are positive and scales
@@ -81,9 +75,7 @@ def _apply_exponential_transform_and_center_to_image(
     # This step applies the transformation to each pixel.
     scaled_image = exponential_camera_matrices * image
 
-    camera_centers = gaussian_cloud_parameters[
-        GaussianCloudParameterNames.camera_centers
-    ][camera_id]
+    camera_centers = gaussian_cloud_parameters.camera_centers[camera_id]
 
     # Add the camera center parameters to the scaled image.
     # This re-centers the transformed image based on the camera's center coordinates,
@@ -95,7 +87,7 @@ def _apply_exponential_transform_and_center_to_image(
 
 def _calculate_image_loss(
     rendered_image,
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
 ):
     image = _apply_exponential_transform_and_center_to_image(
@@ -108,7 +100,7 @@ def _calculate_image_loss(
 
 def _add_image_loss_grad(
     losses: dict[str, torch.Tensor],
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
 ):
     gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
@@ -133,13 +125,11 @@ def _add_image_loss_grad(
 
 def _add_segmentation_loss(
     losses: dict[str, torch.Tensor],
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
 ):
     gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
-    gaussian_cloud.colors = gaussian_cloud_parameters[
-        GaussianCloudParameterNames.segmentation_masks
-    ]
+    gaussian_cloud.colors = gaussian_cloud_parameters.segmentation_colors
     (
         segmentation_mask,
         _,
@@ -184,7 +174,7 @@ def _combine_losses(losses: dict[str, torch.Tensor]):
 
 
 def calculate_image_and_segmentation_loss(
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
     densification_variables: DensificationVariables,
 ):
@@ -208,7 +198,7 @@ def calculate_image_and_segmentation_loss(
 
 def _add_image_loss_no_grad(
     losses: dict[str, torch.Tensor],
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
 ):
     gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
@@ -281,14 +271,13 @@ def _calculate_background_loss(
 def _add_additional_losses(
     losses: dict[str, torch.Tensor],
     segmentation_mask_gaussian_cloud: GaussianCloud,
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     initial_background: Background,
     initial_neighborhoods: Neighborhoods,
     previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
 ):
     foreground_mask = (
-        gaussian_cloud_parameters[GaussianCloudParameterNames.segmentation_masks][:, 0]
-        > 0.5
+        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
     ).detach()
     foreground_means = segmentation_mask_gaussian_cloud.means_3d[foreground_mask]
     foreground_rotations = segmentation_mask_gaussian_cloud.rotations[foreground_mask]
@@ -322,13 +311,13 @@ def _add_additional_losses(
         initial_background=initial_background,
     )
     losses["soft_col_cons"] = _l1_loss_v2(
-        gaussian_cloud_parameters[GaussianCloudParameterNames.colors],
+        gaussian_cloud_parameters.rgb_colors,
         previous_timestep_gaussian_cloud_state.colors,
     )
 
 
 def calculate_full_loss(
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
     initial_background: Background,
     initial_neighborhoods: Neighborhoods,

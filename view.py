@@ -8,7 +8,7 @@ import torch
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from tqdm import tqdm
 
-from commons.classes import GaussianCloudParameterNames, Camera
+from commons.classes import Camera, GaussianCloudParameters
 from commons.command import Command
 from deformation_network import (
     update_parameters,
@@ -36,21 +36,11 @@ class View(Command):
     aspect_ratio: float = 0.82
 
     @staticmethod
-    def _load_initial_gaussian_cloud_parameters(network_directory_path):
-        return {
-            parameter_name: torch.tensor(parameter_value).cuda().float()
-            for parameter_name, parameter_value in dict(
-                np.load(
-                    os.path.join(
-                        network_directory_path,
-                        "initial_gaussian_cloud_parameters.npz",
-                    )
-                )
-            ).items()
-        }
-
-    @staticmethod
-    def _get_timestep_parameters(deformation_network, parameters, timestep):
+    def _get_timestep_parameters(
+        deformation_network: DeformationNetwork,
+        parameters: GaussianCloudParameters,
+        timestep: int,
+    ):
         if timestep == 0:
             updated_parameters = parameters
         else:
@@ -60,19 +50,15 @@ class View(Command):
         return updated_parameters
 
     @staticmethod
-    def _create_gaussian_cloud(parameters):
+    def _create_gaussian_cloud(parameters: GaussianCloudParameters):
         return {
-            "means3D": parameters[GaussianCloudParameterNames.means],
-            "colors_precomp": parameters[GaussianCloudParameterNames.colors],
-            "rotations": torch.nn.functional.normalize(
-                parameters[GaussianCloudParameterNames.rotation_quaternions]
-            ),
-            "opacities": torch.sigmoid(
-                parameters[GaussianCloudParameterNames.opacities_logits]
-            ),
-            "scales": torch.exp(parameters[GaussianCloudParameterNames.log_scales]),
+            "means3D": parameters.means,
+            "colors_precomp": parameters.rgb_colors,
+            "rotations": torch.nn.functional.normalize(parameters.rotation_quaternions),
+            "opacities": torch.sigmoid(parameters.opacities_logits),
+            "scales": torch.exp(parameters.log_scales),
             "means2D": torch.zeros_like(
-                parameters[GaussianCloudParameterNames.means],
+                parameters.means,
                 requires_grad=True,
                 device="cuda",
             )
@@ -86,62 +72,62 @@ class View(Command):
         )
 
     def run(self):
-        self._set_absolute_paths()
+        with torch.no_grad():
+            self._set_absolute_paths()
 
-        network_directory_path = os.path.join(
-            self.networks_directory_path,
-            self.experiment_id,
-            self.sequence_name,
-        )
-        initial_gaussian_cloud_parameters = (
-            self._load_initial_gaussian_cloud_parameters(
-                network_directory_path=network_directory_path
+            network_directory_path = os.path.join(
+                self.networks_directory_path,
+                self.experiment_id,
+                self.sequence_name,
             )
-        )
-        for parameter in initial_gaussian_cloud_parameters.values():
-            parameter.requires_grad = False
-
-        render_images = []
-        yaw = self.starting_yaw
-        timestep_count = json.load(
-            open(
+            initial_gaussian_cloud_parameters: GaussianCloudParameters = torch.load(
                 os.path.join(
                     network_directory_path,
-                    "metadata.json",
+                    "densified_gaussian_cloud_parameters.pth",
                 ),
-                "r",
+                map_location="cuda",
             )
-        )["timestep_count"]
 
-        network_state_dict_path = os.path.join(
-            network_directory_path,
-            "network_state_dict.pth",
-        )
-        deformation_network = DeformationNetwork(timestep_count).cuda()
-        deformation_network.load_state_dict(torch.load(network_state_dict_path))
-        deformation_network.eval()
+            render_images = []
+            yaw = self.starting_yaw
+            timestep_count = json.load(
+                open(
+                    os.path.join(
+                        network_directory_path,
+                        "metadata.json",
+                    ),
+                    "r",
+                )
+            )["timestep_count"]
 
-        for timestep in tqdm(range(timestep_count), desc="Rendering progress"):
-            timestep_gaussian_cloud_parameters = self._get_timestep_parameters(
-                deformation_network,
-                initial_gaussian_cloud_parameters,
-                timestep,
+            network_state_dict_path = os.path.join(
+                network_directory_path,
+                "network_state_dict.pth",
             )
-            gaussian_cloud = self._create_gaussian_cloud(
-                timestep_gaussian_cloud_parameters
-            )
-            camera = Camera.from_parameters(
-                id_=0,
-                image_width=self.image_width,
-                image_height=self.image_height,
-                near_clipping_plane_distance=self.near_clipping_plane_distance,
-                far_clipping_plane_distance=self.far_clipping_plane_distance,
-                yaw=yaw,
-                distance_to_center=self.distance_to_center,
-                height=self.height,
-                aspect_ratio=self.aspect_ratio,
-            )
-            with torch.no_grad():
+            deformation_network = DeformationNetwork(timestep_count).cuda()
+            deformation_network.load_state_dict(torch.load(network_state_dict_path))
+            deformation_network.eval()
+
+            for timestep in tqdm(range(timestep_count), desc="Rendering progress"):
+                timestep_gaussian_cloud_parameters = self._get_timestep_parameters(
+                    deformation_network,
+                    initial_gaussian_cloud_parameters,
+                    timestep,
+                )
+                gaussian_cloud = self._create_gaussian_cloud(
+                    timestep_gaussian_cloud_parameters
+                )
+                camera = Camera.from_parameters(
+                    id_=0,
+                    image_width=self.image_width,
+                    image_height=self.image_height,
+                    near_clipping_plane_distance=self.near_clipping_plane_distance,
+                    far_clipping_plane_distance=self.far_clipping_plane_distance,
+                    yaw=yaw,
+                    distance_to_center=self.distance_to_center,
+                    height=self.height,
+                    aspect_ratio=self.aspect_ratio,
+                )
                 (
                     image,
                     _,
@@ -161,19 +147,19 @@ class View(Command):
                     .astype(np.uint8)
                     .transpose(1, 2, 0)
                 )
-            yaw += self.yaw_degrees_per_second / self.fps
+                yaw += self.yaw_degrees_per_second / self.fps
 
-        rendered_sequence_path = os.path.join(
-            self.rendered_sequence_directory_path,
-            self.experiment_id,
-            f"{self.sequence_name}.mp4",
-        )
-        os.makedirs(os.path.dirname(rendered_sequence_path), exist_ok=True)
-        imageio.mimwrite(
-            rendered_sequence_path,
-            render_images,
-            fps=self.fps,
-        )
+            rendered_sequence_path = os.path.join(
+                self.rendered_sequence_directory_path,
+                self.experiment_id,
+                f"{self.sequence_name}.mp4",
+            )
+            os.makedirs(os.path.dirname(rendered_sequence_path), exist_ok=True)
+            imageio.mimwrite(
+                rendered_sequence_path,
+                render_images,
+                fps=self.fps,
+            )
 
 
 def main():

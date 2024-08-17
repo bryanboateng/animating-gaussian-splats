@@ -3,19 +3,29 @@ from typing import Optional
 
 import numpy as np
 import torch
-
 from diff_gaussian_rasterization import GaussianRasterizationSettings
 
 
-class GaussianCloudParameterNames:
-    means = "means3D"
-    colors = "rgb_colors"
-    segmentation_masks = "seg_colors"
-    rotation_quaternions = "unnorm_rotations"
-    opacities_logits = "logit_opacities"
-    log_scales = "log_scales"
-    camera_matrices = "cam_m"
-    camera_centers = "cam_c"
+class GaussianCloudParameters:
+    def __init__(
+        self,
+        means: torch.nn.Parameter,
+        rgb_colors: torch.nn.Parameter,
+        segmentation_colors: torch.nn.Parameter,
+        rotation_quaternions: torch.nn.Parameter,
+        opacities_logits: torch.nn.Parameter,
+        log_scales: torch.nn.Parameter,
+        camera_matrices: torch.nn.Parameter,
+        camera_centers: torch.nn.Parameter,
+    ):
+        self.means = means
+        self.rgb_colors = rgb_colors
+        self.segmentation_colors = segmentation_colors
+        self.rotation_quaternions = rotation_quaternions
+        self.opacities_logits = opacities_logits
+        self.log_scales = log_scales
+        self.camera_matrices = camera_matrices
+        self.camera_centers = camera_centers
 
 
 class Camera:

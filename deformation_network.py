@@ -3,7 +3,7 @@ import copy
 import torch
 from torch import nn
 
-from commons.classes import GaussianCloudParameterNames
+from commons.classes import GaussianCloudParameters
 
 
 class DeformationNetwork(nn.Module):
@@ -37,13 +37,14 @@ class DeformationNetwork(nn.Module):
         return initial_input_tensor + x
 
 
-def update_parameters(deformation_network: DeformationNetwork, parameters, timestep):
+def update_parameters(
+    deformation_network: DeformationNetwork,
+    parameters: GaussianCloudParameters,
+    timestep,
+):
     delta = deformation_network(
         torch.cat(
-            (
-                parameters[GaussianCloudParameterNames.means],
-                parameters[GaussianCloudParameterNames.rotation_quaternions],
-            ),
+            (parameters.means, parameters.rotation_quaternions),
             dim=1,
         ),
         torch.tensor(timestep).cuda(),
@@ -51,14 +52,10 @@ def update_parameters(deformation_network: DeformationNetwork, parameters, times
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
     updated_parameters = copy.deepcopy(parameters)
-    updated_parameters[GaussianCloudParameterNames.means] = updated_parameters[
-        GaussianCloudParameterNames.means
-    ].detach()
-    updated_parameters[GaussianCloudParameterNames.means] += means_delta * 0.01
-    updated_parameters[GaussianCloudParameterNames.rotation_quaternions] = (
-        updated_parameters[GaussianCloudParameterNames.rotation_quaternions].detach()
+    updated_parameters.means = updated_parameters.means.detach()
+    updated_parameters.means += means_delta * 0.01
+    updated_parameters.rotation_quaternions = (
+        updated_parameters.rotation_quaternions.detach()
     )
-    updated_parameters[GaussianCloudParameterNames.rotation_quaternions] += (
-        rotations_delta * 0.01
-    )
+    updated_parameters.rotation_quaternions += rotations_delta * 0.01
     return updated_parameters
