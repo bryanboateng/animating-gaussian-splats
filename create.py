@@ -2,7 +2,6 @@ import json
 import math
 import os
 from dataclasses import dataclass, MISSING
-from datetime import datetime
 from typing import Optional
 
 import numpy as np
@@ -33,7 +32,6 @@ from deformation_network import (
 class Create(Command):
     sequence_name: str = MISSING
     data_directory_path: str = MISSING
-    experiment_id: str = datetime.utcnow().isoformat() + "Z"
     learning_rate: float = 0.01
     timestep_count_limit: Optional[int] = None
     output_directory_path: str = "./deformation_networks"
@@ -176,7 +174,7 @@ class Create(Command):
     ):
         network_directory_path = os.path.join(
             self.output_directory_path,
-            self.experiment_id,
+            wandb.run.name,
             self.sequence_name,
         )
 
