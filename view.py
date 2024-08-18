@@ -94,7 +94,7 @@ class View(Command):
             initial_gaussian_cloud_parameters: GaussianCloudParameters = torch.load(
                 os.path.join(
                     network_directory_path,
-                    "densified_gaussian_cloud_parameters.pth",
+                    "densified_initial_gaussian_cloud_parameters.pth",
                 ),
                 map_location="cuda",
             )

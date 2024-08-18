@@ -288,7 +288,7 @@ def densify_gaussians(
             rots = build_rotation(
                 gaussian_cloud_parameters.rotation_quaternions[to_split]
             ).repeat(n, 1, 1)
-            new_params["means3D"] += torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
+            new_params["means"] += torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
             new_params["log_scales"] = torch.log(
                 torch.exp(new_params["log_scales"]) / (0.8 * n)
             )
@@ -331,7 +331,7 @@ def densify_gaussians(
 
         if i > 0 and i % 3000 == 0:
             new_params = {
-                "logit_opacities": inverse_sigmoid(
+                "opacities_logits": inverse_sigmoid(
                     torch.ones_like(gaussian_cloud_parameters.opacities_logits) * 0.01
                 )
             }
