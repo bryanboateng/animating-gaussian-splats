@@ -3,7 +3,6 @@ import wandb
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from commons.classes import (
-    Background,
     Capture,
     DensificationVariables,
     GaussianCloudReferenceState,
@@ -85,19 +84,6 @@ def _apply_exponential_transform_and_center_to_image(
     return adjusted_image
 
 
-def _calculate_image_loss(
-    rendered_image,
-    gaussian_cloud_parameters: GaussianCloudParameters,
-    target_capture: Capture,
-):
-    image = _apply_exponential_transform_and_center_to_image(
-        rendered_image, gaussian_cloud_parameters, target_capture.camera.id_
-    )
-    return 0.8 * _l1_loss_v1(image, target_capture.image) + 0.2 * (
-        1.0 - calc_ssim(image, target_capture.image)
-    )
-
-
 def _add_image_loss_grad(
     losses: dict[str, torch.Tensor],
     gaussian_cloud_parameters: GaussianCloudParameters,
@@ -112,10 +98,11 @@ def _add_image_loss_grad(
     ) = Renderer(
         raster_settings=target_capture.camera.gaussian_rasterization_settings
     )(**gaussian_cloud.get_renderer_format())
-    losses["im"] = _calculate_image_loss(
-        rendered_image=rendered_image,
-        gaussian_cloud_parameters=gaussian_cloud_parameters,
-        target_capture=target_capture,
+    image = _apply_exponential_transform_and_center_to_image(
+        rendered_image, gaussian_cloud_parameters, target_capture.camera.id_
+    )
+    losses["im"] = 0.8 * _l1_loss_v1(image, target_capture.image) + 0.2 * (
+        1.0 - calc_ssim(image, target_capture.image)
     )
     means_2d = (
         gaussian_cloud.means_2d
@@ -196,26 +183,6 @@ def calculate_image_and_segmentation_loss(
     return _combine_losses(losses), densification_variables
 
 
-def _add_image_loss_no_grad(
-    losses: dict[str, torch.Tensor],
-    gaussian_cloud_parameters: GaussianCloudParameters,
-    target_capture: Capture,
-):
-    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
-    (
-        rendered_image,
-        _,
-        _,
-    ) = Renderer(
-        raster_settings=target_capture.camera.gaussian_rasterization_settings
-    )(**gaussian_cloud.get_renderer_format())
-    losses["im"] = _calculate_image_loss(
-        rendered_image=rendered_image,
-        gaussian_cloud_parameters=gaussian_cloud_parameters,
-        target_capture=target_capture,
-    )
-
-
 def _quat_mult(q1, q2):
     w1, x1, y1, z1 = q1.T
     w2, x2, y2, z2 = q2.T
@@ -227,120 +194,73 @@ def _quat_mult(q1, q2):
 
 
 def _calculate_rigidity_loss(
-    relative_rotation_quaternion: torch.Tensor,
-    foreground_offset_to_neighbors: torch.Tensor,
-    previous_offsets_to_neighbors: torch.Tensor,
-    neighborhood_weights: torch.Tensor,
+    gaussian_cloud,
+    foreground_mask,
+    initial_neighborhoods,
+    previous_timestep_gaussian_cloud_state,
 ):
+    foreground_means = gaussian_cloud.means_3d[foreground_mask]
+    foreground_rotations = gaussian_cloud.rotations[foreground_mask]
+    relative_rotation_quaternion = _quat_mult(
+        foreground_rotations,
+        previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
+    )
     rotation_matrix = build_rotation(relative_rotation_quaternion)
+    foreground_neighbor_means = foreground_means[initial_neighborhoods.indices]
+    foreground_offset_to_neighbors = (
+        foreground_neighbor_means - foreground_means[:, None]
+    )
     curr_offset_in_prev_coord = (
         rotation_matrix.transpose(2, 1)[:, None]
         @ foreground_offset_to_neighbors[:, :, :, None]
     ).squeeze(-1)
     return _weighted_l2_loss_v2(
         curr_offset_in_prev_coord,
-        previous_offsets_to_neighbors,
-        neighborhood_weights,
-    )
-
-
-def _calculate_isometry_loss(
-    foreground_offset_to_neighbors: torch.Tensor,
-    initial_neighborhoods: Neighborhoods,
-):
-    curr_offset_mag = torch.sqrt((foreground_offset_to_neighbors**2).sum(-1) + 1e-20)
-    return _weighted_l2_loss_v1(
-        curr_offset_mag,
-        initial_neighborhoods.distances,
+        previous_timestep_gaussian_cloud_state.offsets_to_neighbors,
         initial_neighborhoods.weights,
-    )
-
-
-def _calculate_background_loss(
-    gaussian_cloud: GaussianCloud,
-    is_foreground: torch.Tensor,
-    initial_background: Background,
-):
-    bg_pts = gaussian_cloud.means_3d[~is_foreground]
-    bg_rot = gaussian_cloud.rotations[~is_foreground]
-    return _l1_loss_v2(bg_pts, initial_background.means) + _l1_loss_v2(
-        bg_rot, initial_background.rotations
-    )
-
-
-def _add_additional_losses(
-    losses: dict[str, torch.Tensor],
-    segmentation_mask_gaussian_cloud: GaussianCloud,
-    gaussian_cloud_parameters: GaussianCloudParameters,
-    initial_background: Background,
-    initial_neighborhoods: Neighborhoods,
-    previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
-):
-    foreground_mask = (
-        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
-    ).detach()
-    foreground_means = segmentation_mask_gaussian_cloud.means_3d[foreground_mask]
-    foreground_rotations = segmentation_mask_gaussian_cloud.rotations[foreground_mask]
-    relative_rotation_quaternion = _quat_mult(
-        foreground_rotations,
-        previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
-    )
-    foreground_neighbor_means = foreground_means[initial_neighborhoods.indices]
-    foreground_offset_to_neighbors = (
-        foreground_neighbor_means - foreground_means[:, None]
-    )
-    losses["rigid"] = _calculate_rigidity_loss(
-        relative_rotation_quaternion=relative_rotation_quaternion,
-        foreground_offset_to_neighbors=foreground_offset_to_neighbors,
-        previous_offsets_to_neighbors=previous_timestep_gaussian_cloud_state.offsets_to_neighbors,
-        neighborhood_weights=initial_neighborhoods.weights,
-    )
-    losses["rot"] = _weighted_l2_loss_v2(
-        relative_rotation_quaternion[initial_neighborhoods.indices],
-        relative_rotation_quaternion[:, None],
-        initial_neighborhoods.weights,
-    )
-    losses["iso"] = _calculate_isometry_loss(
-        foreground_offset_to_neighbors=foreground_offset_to_neighbors,
-        initial_neighborhoods=initial_neighborhoods,
-    )
-    losses["floor"] = torch.clamp(foreground_means[:, 1], min=0).mean()
-    losses["bg"] = _calculate_background_loss(
-        gaussian_cloud=segmentation_mask_gaussian_cloud,
-        is_foreground=foreground_mask,
-        initial_background=initial_background,
-    )
-    losses["soft_col_cons"] = _l1_loss_v2(
-        gaussian_cloud_parameters.rgb_colors,
-        previous_timestep_gaussian_cloud_state.colors,
     )
 
 
 def calculate_full_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_capture: Capture,
-    initial_background: Background,
     initial_neighborhoods: Neighborhoods,
     previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
+    rigidity_loss_weight,
 ):
-    losses: dict[str, torch.Tensor] = {}
-    _add_image_loss_no_grad(
-        losses=losses,
-        gaussian_cloud_parameters=gaussian_cloud_parameters,
-        target_capture=target_capture,
-    )
-    segmentation_mask_gaussian_cloud = _add_segmentation_loss(
-        losses=losses,
-        gaussian_cloud_parameters=gaussian_cloud_parameters,
-        target_capture=target_capture,
-    )
-    _add_additional_losses(
-        losses=losses,
-        segmentation_mask_gaussian_cloud=segmentation_mask_gaussian_cloud,
-        gaussian_cloud_parameters=gaussian_cloud_parameters,
-        initial_background=initial_background,
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+    (
+        rendered_image,
+        _,
+        _,
+    ) = Renderer(
+        raster_settings=target_capture.camera.gaussian_rasterization_settings
+    )(**gaussian_cloud.get_renderer_format())
+
+    foreground_mask = (
+        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
+    ).detach()
+    rigidity_loss = _calculate_rigidity_loss(
+        gaussian_cloud=gaussian_cloud,
+        foreground_mask=foreground_mask,
         initial_neighborhoods=initial_neighborhoods,
         previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
     )
 
-    return _combine_losses(losses)
+    image = _apply_exponential_transform_and_center_to_image(
+        rendered_image, gaussian_cloud_parameters, target_capture.camera.id_
+    )
+    l1_loss = _l1_loss_v1(image, target_capture.image)
+    ssim_loss = 1.0 - calc_ssim(image, target_capture.image)
+    image_loss = 0.8 * l1_loss + 0.2 * ssim_loss
+
+    wandb.log(
+        {
+            f"loss-l1": l1_loss.item(),
+            f"loss-ssim": ssim_loss.item(),
+            f"loss-image": image_loss.item(),
+            f"loss-rigid": rigidity_loss.item(),
+        }
+    )
+
+    return image_loss + 3 * rigidity_loss_weight * rigidity_loss

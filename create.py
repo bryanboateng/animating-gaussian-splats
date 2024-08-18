@@ -1,22 +1,20 @@
 import json
+import math
 import os
 from dataclasses import dataclass, MISSING
 from datetime import datetime
-from random import randint
 from typing import Optional
 
 import numpy as np
 import torch
 import wandb
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from tqdm import tqdm
 
 from commons.classes import (
-    GaussianCloudParameters,
-)
-from commons.classes import (
     GaussianCloudReferenceState,
     Neighborhoods,
-    Background,
+    GaussianCloudParameters,
 )
 from commons.command import Command
 from commons.helpers import (
@@ -27,6 +25,7 @@ from commons.loss import calculate_full_loss
 from deformation_network import (
     update_parameters,
     DeformationNetwork,
+    normalize_means_and_rotations,
 )
 
 
@@ -35,15 +34,10 @@ class Create(Command):
     sequence_name: str = MISSING
     data_directory_path: str = MISSING
     experiment_id: str = datetime.utcnow().isoformat() + "Z"
-    learning_rate: float = 1e-3
+    learning_rate: float = 0.01
     timestep_count_limit: Optional[int] = None
     output_directory_path: str = "./deformation_networks"
-
-    @staticmethod
-    def get_random_element(input_list, fallback_list):
-        if not input_list:
-            input_list = fallback_list.copy()
-        return input_list.pop(randint(0, len(input_list) - 1))
+    iteration_count: int = 200_000
 
     @staticmethod
     def initialize_post_first_timestep(
@@ -52,10 +46,6 @@ class Create(Command):
 
         foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
         foreground_means = gaussian_cloud_parameters.means[foreground_mask]
-        background_means = gaussian_cloud_parameters.means[~foreground_mask]
-        background_rotations = torch.nn.functional.normalize(
-            gaussian_cloud_parameters.rotation_quaternions[~foreground_mask]
-        )
         neighbor_indices_list, neighbor_squared_distances_list = (
             compute_knn_indices_and_squared_distances(
                 foreground_means.detach().cpu().numpy(), 20
@@ -76,10 +66,6 @@ class Create(Command):
                 .contiguous()
             ),
         )
-        background = Background(
-            means=background_means.detach(),
-            rotations=background_rotations.detach(),
-        )
 
         previous_timestep_gaussian_cloud_state = GaussianCloudReferenceState(
             means=gaussian_cloud_parameters.means.detach(),
@@ -88,7 +74,23 @@ class Create(Command):
             ).detach(),
         )
 
-        return background, neighborhoods, previous_timestep_gaussian_cloud_state
+        return neighborhoods, previous_timestep_gaussian_cloud_state
+
+    @staticmethod
+    def _get_linear_warmup_cos_annealing(optimizer, warmup_iters, total_iters):
+        scheduler_warmup = LinearLR(
+            optimizer, start_factor=1 / 1000, total_iters=warmup_iters
+        )
+        scheduler_cos_decay = CosineAnnealingLR(
+            optimizer, T_max=total_iters - warmup_iters
+        )
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[scheduler_warmup, scheduler_cos_decay],
+            milestones=[warmup_iters],
+        )
+
+        return scheduler
 
     @staticmethod
     def _get_inverted_foreground_rotations(
@@ -133,13 +135,6 @@ class Create(Command):
         self.data_directory_path = os.path.abspath(self.data_directory_path)
         self.output_directory_path = os.path.abspath(self.output_directory_path)
 
-    def _get_timestep_count(self, dataset_metadata):
-        sequence_length = len(dataset_metadata["fn"])
-        if self.timestep_count_limit is None:
-            return sequence_length
-        else:
-            return min(sequence_length, self.timestep_count_limit)
-
     def _load_densified_initial_parameters(self):
         parameters: GaussianCloudParameters = torch.load(
             os.path.join(
@@ -152,6 +147,26 @@ class Create(Command):
         for parameter in parameters.__dict__.values():
             parameter.requires_grad = False
         return parameters
+
+    def _get_timestep_count(self, dataset_metadata):
+        sequence_length = len(dataset_metadata["fn"])
+        if self.timestep_count_limit is None:
+            return sequence_length
+        else:
+            return min(sequence_length, self.timestep_count_limit)
+
+    def _load_all_captures(self, dataset_metadata, timestep_count):
+        captures = []
+        for timestep in range(1, timestep_count + 1):
+            captures += [
+                load_timestep_captures(
+                    dataset_metadata,
+                    timestep,
+                    self.data_directory_path,
+                    self.sequence_name,
+                )
+            ]
+        return captures
 
     def _save_and_log_checkpoint(
         self,
@@ -214,80 +229,89 @@ class Create(Command):
             )
         )
         timestep_count = self._get_timestep_count(dataset_metadata)
-        deformation_network = DeformationNetwork(timestep_count).cuda()
+        deformation_network = DeformationNetwork().cuda()
         optimizer = torch.optim.Adam(
             params=deformation_network.parameters(), lr=self.learning_rate
+        )
+        scheduler = self._get_linear_warmup_cos_annealing(
+            optimizer, warmup_iters=15_000, total_iters=self.iteration_count
         )
 
         initial_gaussian_cloud_parameters = self._load_densified_initial_parameters()
 
         (
-            initial_background,
             initial_neighborhoods,
             previous_timestep_gaussian_cloud_state,
         ) = self.initialize_post_first_timestep(
             gaussian_cloud_parameters=initial_gaussian_cloud_parameters
         )
-
-        self._update_previous_timestep_gaussian_cloud_state(
-            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
-            neighborhood_indices=initial_neighborhoods.indices,
+        normalized_means, pos_smol, normalized_rotations = (
+            normalize_means_and_rotations(initial_gaussian_cloud_parameters)
         )
-        for timestep in range(1, timestep_count):
-            timestep_capture_list = load_timestep_captures(
-                dataset_metadata, timestep, self.data_directory_path, self.sequence_name
-            )
-            timestep_capture_buffer = []
+        captures = self._load_all_captures(dataset_metadata, timestep_count)
+        for i in tqdm(range(self.iteration_count)):
+            timestep = i % timestep_count
+            camera_index = torch.randint(0, len(captures[0]), (1,))
 
-            for _ in tqdm(range(10_000), desc=f"timestep {timestep}"):
-                capture = self.get_random_element(
-                    input_list=timestep_capture_buffer,
-                    fallback_list=timestep_capture_list,
-                )
-                updated_gaussian_cloud_parameters = update_parameters(
-                    deformation_network, initial_gaussian_cloud_parameters, timestep
-                )
-                loss = calculate_full_loss(
-                    gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                    target_capture=capture,
-                    initial_background=initial_background,
-                    initial_neighborhoods=initial_neighborhoods,
+            if timestep == 0:
+                self._update_previous_timestep_gaussian_cloud_state(
+                    gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                     previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+                    neighborhood_indices=initial_neighborhoods.indices,
                 )
-                wandb.log(
-                    {
-                        f"timestep-{timestep}-loss-deformation-network": loss.item(),
-                    }
-                )
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
 
-            timestep_capture_buffer = timestep_capture_list.copy()
-            losses = []
-            while timestep_capture_buffer:
-                with torch.no_grad():
-                    capture = timestep_capture_buffer.pop(
-                        randint(0, len(timestep_capture_buffer) - 1)
-                    )
-                    loss = calculate_full_loss(
-                        gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                        target_capture=capture,
-                        initial_background=initial_background,
-                        initial_neighborhoods=initial_neighborhoods,
-                        previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
-                    )
-                    losses.append(loss.item())
-            wandb.log({f"mean-timestep-losses": sum(losses) / len(losses)})
-            self._save_and_log_checkpoint(
-                initial_gaussian_cloud_parameters, deformation_network, timestep_count
+            capture = captures[timestep][camera_index]
+            updated_gaussian_cloud_parameters = update_parameters(
+                deformation_network=deformation_network,
+                positional_encoding=pos_smol,
+                normalized_means=normalized_means,
+                normalized_rotations=normalized_rotations,
+                parameters=initial_gaussian_cloud_parameters,
+                timestep=timestep,
+                timestep_count=timestep_count,
+            )
+            loss = calculate_full_loss(
+                gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                target_capture=capture,
+                initial_neighborhoods=initial_neighborhoods,
+                previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+                rigidity_loss_weight=(
+                    2.0 / (1.0 + math.exp(-6 * (i / self.iteration_count))) - 1
+                ),
             )
             self._update_previous_timestep_gaussian_cloud_state(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                 previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
                 neighborhood_indices=initial_neighborhoods.indices,
             )
+            wandb.log(
+                {
+                    f"loss-random": loss.item(),
+                    f"lr": optimizer.param_groups[0]["lr"],
+                }
+            )
+
+            loss.backward()
+
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+        for timestep_captures in captures:
+            losses = []
+            with torch.no_grad():
+                for capture in timestep_captures:
+                    loss = calculate_full_loss(
+                        gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                        target_capture=capture,
+                        initial_neighborhoods=initial_neighborhoods,
+                        previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+                        rigidity_loss_weight=1.0,
+                    )
+                    losses.append(loss.item())
+            wandb.log({f"mean-timestep-losses": sum(losses) / len(losses)})
+        self._save_and_log_checkpoint(
+            initial_gaussian_cloud_parameters, deformation_network, timestep_count
+        )
 
 
 def main():

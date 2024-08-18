@@ -158,12 +158,6 @@ class Neighborhoods:
         self.indices: torch.Tensor = indices
 
 
-class Background:
-    def __init__(self, means: torch.Tensor, rotations: torch.Tensor):
-        self.means: torch.Tensor = means
-        self.rotations: torch.Tensor = rotations
-
-
 class GaussianCloudReferenceState:
     def __init__(self, means: torch.Tensor, rotations: torch.Tensor):
         self.means: torch.Tensor = means

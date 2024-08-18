@@ -8,9 +8,10 @@ import torch
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from tqdm import tqdm
 
-from commons.classes import Camera, GaussianCloudParameters
+from commons.classes import GaussianCloudParameters, Camera
 from commons.command import Command
 from deformation_network import (
+    normalize_means_and_rotations,
     update_parameters,
     DeformationNetwork,
 )
@@ -37,15 +38,25 @@ class View(Command):
 
     @staticmethod
     def _get_timestep_parameters(
-        deformation_network: DeformationNetwork,
-        parameters: GaussianCloudParameters,
-        timestep: int,
+        deformation_network,
+        positional_encoding,
+        means_norm,
+        rotations_norm,
+        parameters,
+        timestep,
+        timestep_count,
     ):
         if timestep == 0:
             updated_parameters = parameters
         else:
             updated_parameters = update_parameters(
-                deformation_network, parameters, timestep
+                deformation_network=deformation_network,
+                positional_encoding=positional_encoding,
+                normalized_means=means_norm,
+                normalized_rotations=rotations_norm,
+                parameters=parameters,
+                timestep=timestep,
+                timestep_count=timestep_count,
             )
         return updated_parameters
 
@@ -87,6 +98,8 @@ class View(Command):
                 ),
                 map_location="cuda",
             )
+            for parameter in initial_gaussian_cloud_parameters.__dict__.values():
+                parameter.requires_grad = False
 
             render_images = []
             yaw = self.starting_yaw
@@ -104,15 +117,22 @@ class View(Command):
                 network_directory_path,
                 "network_state_dict.pth",
             )
-            deformation_network = DeformationNetwork(timestep_count).cuda()
+            deformation_network = DeformationNetwork().cuda()
             deformation_network.load_state_dict(torch.load(network_state_dict_path))
             deformation_network.eval()
 
+            means_norm, pos_smol, rotations_norm = normalize_means_and_rotations(
+                initial_gaussian_cloud_parameters
+            )
             for timestep in tqdm(range(timestep_count), desc="Rendering progress"):
                 timestep_gaussian_cloud_parameters = self._get_timestep_parameters(
-                    deformation_network,
-                    initial_gaussian_cloud_parameters,
-                    timestep,
+                    deformation_network=deformation_network,
+                    positional_encoding=pos_smol,
+                    means_norm=means_norm,
+                    rotations_norm=rotations_norm,
+                    parameters=initial_gaussian_cloud_parameters,
+                    timestep=timestep,
+                    timestep_count=timestep_count,
                 )
                 gaussian_cloud = self._create_gaussian_cloud(
                     timestep_gaussian_cloud_parameters
