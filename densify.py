@@ -15,7 +15,7 @@ from commons.classes import (
 from commons.command import Command
 from commons.helpers import (
     compute_knn_indices_and_squared_distances,
-    load_timestep_captures,
+    load_timestep_views,
 )
 from commons.loss import calculate_image_and_segmentation_loss
 from external import densify_gaussians
@@ -204,20 +204,20 @@ class Densify(Command):
         )
         densification_variables = self._create_densification_variables(parameters)
         timestep = 0
-        timestep_captures = load_timestep_captures(
+        timestep_views = load_timestep_views(
             dataset_metadata=dataset_metadata,
             timestep=timestep,
             data_directory_path=self.data_directory_path,
             sequence_name=self.sequence_name,
         )
-        timestep_capture_buffer = []
+        timestep_view_buffer = []
         for i in tqdm(range(30_000), desc=f"timestep {timestep}"):
-            capture = self.get_random_element(
-                input_list=timestep_capture_buffer, fallback_list=timestep_captures
+            view = self.get_random_element(
+                input_list=timestep_view_buffer, fallback_list=timestep_views
             )
             loss, densification_variables = calculate_image_and_segmentation_loss(
                 gaussian_cloud_parameters=parameters,
-                target_capture=capture,
+                target_view=view,
                 densification_variables=densification_variables,
             )
             wandb.log(

@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 
 from commons.classes import (
-    Capture,
+    View,
     Camera,
 )
 
@@ -31,7 +31,7 @@ def compute_knn_indices_and_squared_distances(numpy_point_cloud: np.ndarray, k: 
     return np.array(indices_list), np.array(squared_distances_list)
 
 
-def load_timestep_captures(
+def load_timestep_views(
     dataset_metadata, timestep: int, data_directory_path: str, sequence_name: str
 ):
     timestep_data = []
@@ -56,7 +56,7 @@ def load_timestep_captures(
             .cuda()
         )
         timestep_data.append(
-            Capture(
+            View(
                 camera=Camera(
                     id_=camera_index,
                     image_width=dataset_metadata["w"],

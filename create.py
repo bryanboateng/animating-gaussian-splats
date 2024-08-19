@@ -18,7 +18,7 @@ from commons.classes import (
 from commons.command import Command
 from commons.helpers import (
     compute_knn_indices_and_squared_distances,
-    load_timestep_captures,
+    load_timestep_views,
 )
 from commons.loss import calculate_full_loss
 from deformation_network import (
@@ -153,18 +153,18 @@ class Create(Command):
         else:
             return min(sequence_length, self.timestep_count_limit)
 
-    def _load_all_captures(self, dataset_metadata, timestep_count):
-        captures = []
+    def _load_all_views(self, dataset_metadata, timestep_count):
+        views = []
         for timestep in range(1, timestep_count + 1):
-            captures += [
-                load_timestep_captures(
+            views += [
+                load_timestep_views(
                     dataset_metadata,
                     timestep,
                     self.data_directory_path,
                     self.sequence_name,
                 )
             ]
-        return captures
+        return views
 
     def _save_and_log_checkpoint(
         self,
@@ -246,10 +246,10 @@ class Create(Command):
         normalized_means, pos_smol, normalized_rotations = (
             normalize_means_and_rotations(initial_gaussian_cloud_parameters)
         )
-        captures = self._load_all_captures(dataset_metadata, timestep_count)
+        views = self._load_all_views(dataset_metadata, timestep_count)
         for i in tqdm(range(self.iteration_count)):
             timestep = i % timestep_count
-            camera_index = torch.randint(0, len(captures[0]), (1,))
+            camera_index = torch.randint(0, len(views[0]), (1,))
 
             if timestep == 0:
                 self._update_previous_timestep_gaussian_cloud_state(
@@ -258,7 +258,7 @@ class Create(Command):
                     neighborhood_indices=initial_neighborhoods.indices,
                 )
 
-            capture = captures[timestep][camera_index]
+            view = views[timestep][camera_index]
             updated_gaussian_cloud_parameters = update_parameters(
                 deformation_network=deformation_network,
                 positional_encoding=pos_smol,
@@ -270,7 +270,7 @@ class Create(Command):
             )
             loss = calculate_full_loss(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                target_capture=capture,
+                target_view=view,
                 initial_neighborhoods=initial_neighborhoods,
                 previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
                 rigidity_loss_weight=(
@@ -294,13 +294,13 @@ class Create(Command):
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
-        for timestep_captures in captures:
+        for timestep_views in views:
             losses = []
             with torch.no_grad():
-                for capture in timestep_captures:
+                for view in timestep_views:
                     loss = calculate_full_loss(
                         gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                        target_capture=capture,
+                        target_view=view,
                         initial_neighborhoods=initial_neighborhoods,
                         previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
                         rigidity_loss_weight=1.0,

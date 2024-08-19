@@ -140,7 +140,7 @@ class Camera:
         )
 
 
-class Capture:
+class View:
     def __init__(
         self, camera: Camera, image: torch.Tensor, segmentation_mask: torch.Tensor
     ):

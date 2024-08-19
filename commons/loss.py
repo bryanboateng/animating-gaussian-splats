@@ -3,7 +3,7 @@ import wandb
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 
 from commons.classes import (
-    Capture,
+    View,
     DensificationVariables,
     GaussianCloudReferenceState,
     Neighborhoods,
@@ -87,7 +87,7 @@ def _apply_exponential_transform_and_center_to_image(
 def _add_image_loss_grad(
     losses: dict[str, torch.Tensor],
     gaussian_cloud_parameters: GaussianCloudParameters,
-    target_capture: Capture,
+    target_view: View,
 ):
     gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
     gaussian_cloud.means_2d.retain_grad()
@@ -96,13 +96,13 @@ def _add_image_loss_grad(
         radii,
         _,
     ) = Renderer(
-        raster_settings=target_capture.camera.gaussian_rasterization_settings
+        raster_settings=target_view.camera.gaussian_rasterization_settings
     )(**gaussian_cloud.get_renderer_format())
     image = _apply_exponential_transform_and_center_to_image(
-        rendered_image, gaussian_cloud_parameters, target_capture.camera.id_
+        rendered_image, gaussian_cloud_parameters, target_view.camera.id_
     )
-    losses["im"] = 0.8 * _l1_loss_v1(image, target_capture.image) + 0.2 * (
-        1.0 - calc_ssim(image, target_capture.image)
+    losses["im"] = 0.8 * _l1_loss_v1(image, target_view.image) + 0.2 * (
+        1.0 - calc_ssim(image, target_view.image)
     )
     means_2d = (
         gaussian_cloud.means_2d
@@ -113,7 +113,7 @@ def _add_image_loss_grad(
 def _add_segmentation_loss(
     losses: dict[str, torch.Tensor],
     gaussian_cloud_parameters: GaussianCloudParameters,
-    target_capture: Capture,
+    target_view: View,
 ):
     gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
     gaussian_cloud.colors = gaussian_cloud_parameters.segmentation_colors
@@ -122,11 +122,11 @@ def _add_segmentation_loss(
         _,
         _,
     ) = Renderer(
-        raster_settings=target_capture.camera.gaussian_rasterization_settings
+        raster_settings=target_view.camera.gaussian_rasterization_settings
     )(**gaussian_cloud.get_renderer_format())
     losses["seg"] = 0.8 * _l1_loss_v1(
-        segmentation_mask, target_capture.segmentation_mask
-    ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_capture.segmentation_mask))
+        segmentation_mask, target_view.segmentation_mask
+    ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_view.segmentation_mask))
     return gaussian_cloud
 
 
@@ -162,19 +162,19 @@ def _combine_losses(losses: dict[str, torch.Tensor]):
 
 def calculate_image_and_segmentation_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
-    target_capture: Capture,
+    target_view: View,
     densification_variables: DensificationVariables,
 ):
     losses = {}
     means_2d, radii = _add_image_loss_grad(
         losses=losses,
         gaussian_cloud_parameters=gaussian_cloud_parameters,
-        target_capture=target_capture,
+        target_view=target_view,
     )
     _ = _add_segmentation_loss(
         losses=losses,
         gaussian_cloud_parameters=gaussian_cloud_parameters,
-        target_capture=target_capture,
+        target_view=target_view,
     )
     densification_variables.means_2d = means_2d
     _update_max_2d_radii_and_visibility_mask(
@@ -223,7 +223,7 @@ def _calculate_rigidity_loss(
 
 def calculate_full_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
-    target_capture: Capture,
+    target_view: View,
     initial_neighborhoods: Neighborhoods,
     previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
     rigidity_loss_weight,
@@ -234,7 +234,7 @@ def calculate_full_loss(
         _,
         _,
     ) = Renderer(
-        raster_settings=target_capture.camera.gaussian_rasterization_settings
+        raster_settings=target_view.camera.gaussian_rasterization_settings
     )(**gaussian_cloud.get_renderer_format())
 
     foreground_mask = (
@@ -248,10 +248,10 @@ def calculate_full_loss(
     )
 
     image = _apply_exponential_transform_and_center_to_image(
-        rendered_image, gaussian_cloud_parameters, target_capture.camera.id_
+        rendered_image, gaussian_cloud_parameters, target_view.camera.id_
     )
-    l1_loss = _l1_loss_v1(image, target_capture.image)
-    ssim_loss = 1.0 - calc_ssim(image, target_capture.image)
+    l1_loss = _l1_loss_v1(image, target_view.image)
+    ssim_loss = 1.0 - calc_ssim(image, target_view.image)
     image_loss = 0.8 * l1_loss + 0.2 * ssim_loss
 
     wandb.log(
