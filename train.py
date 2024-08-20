@@ -241,7 +241,9 @@ class Create(Command):
         timestep_count,
         visualizations_directory_path,
     ):
-        for timestep in tqdm(range(timestep_count), desc="Rendering progress"):
+        for timestep in tqdm(
+            range(timestep_count), desc=f"Creating Visualization {name}"
+        ):
             if timestep == 0:
                 timestep_gaussian_cloud_parameters = initial_gaussian_cloud_parameters
             else:
@@ -411,7 +413,7 @@ class Create(Command):
             normalize_means_and_rotations(initial_gaussian_cloud_parameters)
         )
         views = self._load_all_views(dataset_metadata, timestep_count)
-        for i in tqdm(range(self.iteration_count)):
+        for i in tqdm(range(self.iteration_count), desc="Training"):
             timestep = i % timestep_count
             camera_index = torch.randint(0, len(views[0]), (1,))
 
