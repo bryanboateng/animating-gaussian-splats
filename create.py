@@ -36,6 +36,7 @@ class Create(Command):
     timestep_count_limit: Optional[int] = None
     output_directory_path: str = "./deformation_networks"
     iteration_count: int = 200_000
+    warmup_iteration_ratio: float = 0.075
 
     @staticmethod
     def initialize_post_first_timestep(
@@ -234,7 +235,9 @@ class Create(Command):
             params=deformation_network.parameters(), lr=self.learning_rate
         )
         scheduler = self._get_linear_warmup_cos_annealing(
-            optimizer, warmup_iters=15_000, total_iters=self.iteration_count
+            optimizer,
+            warmup_iters=int(self.iteration_count * self.warmup_iteration_ratio),
+            total_iters=self.iteration_count,
         )
 
         initial_gaussian_cloud_parameters = self._load_densified_initial_parameters()
