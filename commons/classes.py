@@ -95,50 +95,6 @@ class Camera:
             prefiltered=False,
         )
 
-    @classmethod
-    def from_parameters(
-        cls,
-        id_: int,
-        image_width: int,
-        image_height: int,
-        near_clipping_plane_distance: float,
-        far_clipping_plane_distance: float,
-        yaw: float,
-        distance_to_center: float,
-        height: float,
-        aspect_ratio: float,
-    ):
-        yaw_radians = yaw * math.pi / 180
-        extrinsic_matrix = np.array(
-            [
-                [np.cos(yaw_radians), 0.0, -np.sin(yaw_radians), 0.0],
-                [0.0, 1.0, 0.0, height],
-                [
-                    np.sin(yaw_radians),
-                    0.0,
-                    np.cos(yaw_radians),
-                    distance_to_center,
-                ],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
-        )
-        intrinsic_matrix = np.array(
-            [
-                [aspect_ratio * image_width, 0, image_width / 2],
-                [0, aspect_ratio * image_width, image_height / 2],
-                [0, 0, 1],
-            ]
-        )
-        return cls(
-            id_,
-            image_width,
-            image_height,
-            near_clipping_plane_distance,
-            far_clipping_plane_distance,
-            intrinsic_matrix,
-            extrinsic_matrix,
-        )
-
 
 class View:
     def __init__(

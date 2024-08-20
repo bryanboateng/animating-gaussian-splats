@@ -3,12 +3,10 @@
 ## Google Colab Notebooks
 
 For a quick and easy way to test and run the scripts,
-you can use the provided Google Colab notebooks.
-These notebooks allow you to execute the code without setting up a local environment.
+you can use the provided Google Colab notebook.
+This notebook allows you to execute the code without setting up a local environment.
 
-| Create                                                                                                                                                                                                                                                            | View                                                                                                                                                                                                                                                          |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------   | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [![Open "Create Deformation Network"-Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/animating-gaussian-splats/blob/main/deformation_network/google_colab_notebooks/create.ipynb) | [![Open "View Deformation Network" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/animating-gaussian-splats/blob/main/deformation_network/google_colab_notebooks/view.ipynb) |
+Google Colab Notebook: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/animating-gaussian-splats/blob/main/train.ipynb)
 
 ## Prerequisites
 
@@ -33,33 +31,16 @@ To run the scripts locally, ensure you have the following prerequisites:
    pip install -r requirements.txt
    ```
 
-## Scripts
+## Usage
 
-### Creating a Deformation Network
-
-To create a deformation network, use the following command:
+Use the following command:
 
 ```bash
-python -m create sequence_name data_directory_path [options]
+python -m train sequence_name data_directory_path [options]
 ```
 
 To see all available arguments and options, run:
 
 ```bash
-python -m create -h
-```
-
-### Viewing a Deformation Network
-
-To view the sequence represented by the stored deformation network,
-use the following command:
-
-```bash
-python -m view sequence_name data_directory_path [options]
-```
-
-To see all available arguments and options, run:
-
-```bash
-python -m view -h
+python -m train -h
 ```

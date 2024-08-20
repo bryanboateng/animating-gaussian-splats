@@ -4,9 +4,11 @@ import os
 from dataclasses import dataclass, MISSING
 from typing import Optional
 
+import imageio
 import numpy as np
 import torch
 import wandb
+from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from tqdm import tqdm
 
@@ -14,13 +16,14 @@ from commons.classes import (
     GaussianCloudReferenceState,
     Neighborhoods,
     GaussianCloudParameters,
+    Camera,
 )
 from commons.command import Command
 from commons.helpers import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
 )
-from commons.loss import calculate_full_loss
+from commons.loss import calculate_full_loss, GaussianCloud
 from deformation_network import (
     update_parameters,
     DeformationNetwork,
@@ -37,6 +40,7 @@ class Create(Command):
     output_directory_path: str = "./deformation_networks"
     iteration_count: int = 200_000
     warmup_iteration_ratio: float = 0.075
+    fps: int = 30
 
     @staticmethod
     def initialize_post_first_timestep(
@@ -132,6 +136,18 @@ class Create(Command):
             current_rotations.detach().clone()
         )
 
+    @staticmethod
+    def create_transformation_matrix(yaw_degrees, height, distance_to_center):
+        yaw_radians = np.radians(yaw_degrees)
+        return np.array(
+            [
+                [np.cos(yaw_radians), 0.0, -np.sin(yaw_radians), 0.0],
+                [0.0, 1.0, 0.0, height],
+                [np.sin(yaw_radians), 0.0, np.cos(yaw_radians), distance_to_center],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
     def _set_absolute_paths(self):
         self.data_directory_path = os.path.abspath(self.data_directory_path)
         self.output_directory_path = os.path.abspath(self.output_directory_path)
@@ -169,43 +185,39 @@ class Create(Command):
             ]
         return views
 
-    def _save_and_log_checkpoint(
+    def _export_deformation_network(
         self,
         initial_gaussian_cloud_parameters: GaussianCloudParameters,
         deformation_network: DeformationNetwork,
         timestep_count: int,
     ):
-        network_directory_path = os.path.join(
+        run_output_directory_path = os.path.join(
             self.output_directory_path,
-            wandb.run.name,
-            self.sequence_name,
+            f"{self.sequence_name}_{wandb.run.name}",
         )
-
+        network_directory_path = os.path.join(
+            run_output_directory_path,
+            f"deformation_network_{self.sequence_name}_{wandb.run.name}",
+        )
+        os.makedirs(network_directory_path, exist_ok=True)
         parameters_save_path = os.path.join(
             network_directory_path,
-            "densified_initial_gaussian_cloud_parameters.pth",
+            f"{self.sequence_name}_densified_initial_gaussian_cloud_parameters.pth",
         )
-        os.makedirs(os.path.dirname(parameters_save_path), exist_ok=True)
         torch.save(initial_gaussian_cloud_parameters, parameters_save_path)
 
         with open(
             os.path.join(
                 network_directory_path,
-                "metadata.json",
+                "timestep_count",
             ),
             "w",
         ) as file:
-            json.dump(
-                {
-                    "timestep_count": timestep_count,
-                },
-                file,
-                indent=4,
-            )
+            file.write(f"{timestep_count}")
 
         network_state_dict_path = os.path.join(
             network_directory_path,
-            "network_state_dict.pth",
+            f"deformation_network_state_dict_{self.sequence_name}_{wandb.run.name}.pth",
         )
         torch.save(deformation_network.state_dict(), network_state_dict_path)
         wandb.save(
@@ -213,7 +225,154 @@ class Create(Command):
                 network_directory_path,
                 "*",
             ),
-            base_path=self.output_directory_path,
+            base_path=run_output_directory_path,
+        )
+
+    def _export_visualization(
+        self,
+        deformation_network,
+        name,
+        extrinsic_matrix,
+        initial_gaussian_cloud_parameters,
+        means_norm,
+        pos_smol,
+        render_images,
+        rotations_norm,
+        timestep_count,
+        visualizations_directory_path,
+    ):
+        for timestep in tqdm(range(timestep_count), desc="Rendering progress"):
+            if timestep == 0:
+                timestep_gaussian_cloud_parameters = initial_gaussian_cloud_parameters
+            else:
+                timestep_gaussian_cloud_parameters = update_parameters(
+                    deformation_network=deformation_network,
+                    positional_encoding=pos_smol,
+                    normalized_means=means_norm,
+                    normalized_rotations=rotations_norm,
+                    parameters=initial_gaussian_cloud_parameters,
+                    timestep=timestep,
+                    timestep_count=timestep_count,
+                )
+
+            gaussian_cloud = GaussianCloud(
+                parameters=timestep_gaussian_cloud_parameters
+            )
+
+            image_width = 1280
+            image_height = 720
+            aspect_ratio: float = 0.82
+            camera = Camera(
+                id_=0,
+                image_width=image_width,
+                image_height=image_height,
+                near_clipping_plane_distance=1,
+                far_clipping_plane_distance=100,
+                intrinsic_matrix=np.array(
+                    [
+                        [aspect_ratio * image_width, 0, image_width / 2],
+                        [0, aspect_ratio * image_width, image_height / 2],
+                        [0, 0, 1],
+                    ]
+                ),
+                extrinsic_matrix=extrinsic_matrix,
+            )
+            (
+                image,
+                _,
+                _,
+            ) = Renderer(
+                raster_settings=camera.gaussian_rasterization_settings
+            )(**gaussian_cloud.get_renderer_format())
+            render_images.append(
+                (
+                    255
+                    * np.clip(
+                        image.cpu().numpy(),
+                        0,
+                        1,
+                    )
+                )
+                .astype(np.uint8)
+                .transpose(1, 2, 0)
+            )
+        rendered_sequence_path = os.path.join(
+            visualizations_directory_path,
+            f"{self.sequence_name}_{name}_{wandb.run.name}.mp4",
+        )
+        imageio.mimwrite(
+            rendered_sequence_path,
+            render_images,
+            fps=self.fps,
+        )
+
+    def _export_visualizations(
+        self,
+        initial_gaussian_cloud_parameters: GaussianCloudParameters,
+        deformation_network: DeformationNetwork,
+        timestep_count: int,
+    ):
+        run_output_directory_path = os.path.join(
+            self.output_directory_path,
+            f"{self.sequence_name}_{wandb.run.name}",
+        )
+        visualizations_directory_path = os.path.join(
+            run_output_directory_path,
+            f"visualizations_{self.sequence_name}_{wandb.run.name}",
+        )
+        os.makedirs(visualizations_directory_path, exist_ok=True)
+
+        render_images = []
+
+        deformation_network.eval()
+
+        means_norm, pos_smol, rotations_norm = normalize_means_and_rotations(
+            initial_gaussian_cloud_parameters
+        )
+
+        distance_to_center: float = 2.4
+        height: float = 1.3
+        extrinsic_matrices = {
+            "000": self.create_transformation_matrix(
+                yaw_degrees=0, height=height, distance_to_center=distance_to_center
+            ),
+            "090": self.create_transformation_matrix(
+                yaw_degrees=90, height=height, distance_to_center=distance_to_center
+            ),
+            "180": self.create_transformation_matrix(
+                yaw_degrees=180, height=height, distance_to_center=distance_to_center
+            ),
+            "270": self.create_transformation_matrix(
+                yaw_degrees=270, height=height, distance_to_center=distance_to_center
+            ),
+            "top": np.array(
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, -1.0, 0.0],
+                    [0.0, 1.0, 0.0, 3.5],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+            ),
+        }
+        for name, extrinsic_matrix in extrinsic_matrices.items():
+            self._export_visualization(
+                deformation_network,
+                name,
+                extrinsic_matrix,
+                initial_gaussian_cloud_parameters,
+                means_norm,
+                pos_smol,
+                render_images,
+                rotations_norm,
+                timestep_count,
+                visualizations_directory_path,
+            )
+        wandb.save(
+            os.path.join(
+                visualizations_directory_path,
+                "*",
+            ),
+            base_path=run_output_directory_path,
         )
 
     def run(self):
@@ -312,7 +471,10 @@ class Create(Command):
                     )
                     losses.append(loss.item())
             wandb.log({f"mean-timestep-losses": sum(losses) / len(losses)})
-        self._save_and_log_checkpoint(
+        self._export_deformation_network(
+            initial_gaussian_cloud_parameters, deformation_network, timestep_count
+        )
+        self._export_visualizations(
             initial_gaussian_cloud_parameters, deformation_network, timestep_count
         )
 
