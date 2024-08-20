@@ -471,12 +471,13 @@ class Create(Command):
                     )
                     losses.append(loss.item())
             wandb.log({f"mean-timestep-losses": sum(losses) / len(losses)})
-        self._export_deformation_network(
-            initial_gaussian_cloud_parameters, deformation_network, timestep_count
-        )
-        self._export_visualizations(
-            initial_gaussian_cloud_parameters, deformation_network, timestep_count
-        )
+        with torch.no_grad():
+            self._export_deformation_network(
+                initial_gaussian_cloud_parameters, deformation_network, timestep_count
+            )
+            self._export_visualizations(
+                initial_gaussian_cloud_parameters, deformation_network, timestep_count
+            )
 
 
 def main():
