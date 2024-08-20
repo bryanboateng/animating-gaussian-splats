@@ -215,7 +215,7 @@ class Create(Command):
 
     def run(self):
         self._set_absolute_paths()
-        wandb.init(project="4d-gaussian-splatting")
+        wandb.init(project="animating-gaussian-splats")
         dataset_metadata = json.load(
             open(
                 os.path.join(

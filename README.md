@@ -1,4 +1,4 @@
-# 4D Gaussian Splatting
+# Animating Gaussian Splats
 
 ## Google Colab Notebooks
 
@@ -8,7 +8,7 @@ These notebooks allow you to execute the code without setting up a local environ
 
 | Create                                                                                                                                                                                                                                                            | View                                                                                                                                                                                                                                                          |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------   | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [![Open "Create Deformation Network"-Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/deformation_network/google_colab_notebooks/create.ipynb) | [![Open "View Deformation Network" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/4d-gaussian-splatting/blob/main/deformation_network/google_colab_notebooks/view.ipynb) |
+| [![Open "Create Deformation Network"-Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/animating-gaussian-splats/blob/main/deformation_network/google_colab_notebooks/create.ipynb) | [![Open "View Deformation Network" Notebook In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/animating-gaussian-splats/blob/main/deformation_network/google_colab_notebooks/view.ipynb) |
 
 ## Prerequisites
 
