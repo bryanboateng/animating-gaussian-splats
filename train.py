@@ -236,11 +236,11 @@ class Create(Command):
         initial_gaussian_cloud_parameters,
         means_norm,
         pos_smol,
-        render_images,
         rotations_norm,
         timestep_count,
         visualizations_directory_path,
     ):
+        render_images = []
         for timestep in tqdm(
             range(timestep_count), desc=f"Creating Visualization {name}"
         ):
@@ -324,8 +324,6 @@ class Create(Command):
         )
         os.makedirs(visualizations_directory_path, exist_ok=True)
 
-        render_images = []
-
         deformation_network.eval()
 
         means_norm, pos_smol, rotations_norm = normalize_means_and_rotations(
@@ -364,7 +362,6 @@ class Create(Command):
                 initial_gaussian_cloud_parameters,
                 means_norm,
                 pos_smol,
-                render_images,
                 rotations_norm,
                 timestep_count,
                 visualizations_directory_path,
