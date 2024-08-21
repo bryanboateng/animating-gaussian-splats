@@ -232,6 +232,7 @@ class Create(Command):
         self,
         deformation_network,
         name,
+        aspect_ratio: float,
         extrinsic_matrix,
         initial_gaussian_cloud_parameters,
         means_norm,
@@ -263,7 +264,6 @@ class Create(Command):
 
             image_width = 1280
             image_height = 720
-            aspect_ratio: float = 0.82
             camera = Camera(
                 id_=0,
                 image_width=image_width,
@@ -333,31 +333,51 @@ class Create(Command):
         distance_to_center: float = 2.4
         height: float = 1.3
         extrinsic_matrices = {
-            "000": self.create_transformation_matrix(
-                yaw_degrees=0, height=height, distance_to_center=distance_to_center
+            "000": (
+                self.create_transformation_matrix(
+                    yaw_degrees=0, height=height, distance_to_center=distance_to_center
+                ),
+                0.82,
             ),
-            "090": self.create_transformation_matrix(
-                yaw_degrees=90, height=height, distance_to_center=distance_to_center
+            "090": (
+                self.create_transformation_matrix(
+                    yaw_degrees=90, height=height, distance_to_center=distance_to_center
+                ),
+                0.52,
             ),
-            "180": self.create_transformation_matrix(
-                yaw_degrees=180, height=height, distance_to_center=distance_to_center
+            "180": (
+                self.create_transformation_matrix(
+                    yaw_degrees=180,
+                    height=height,
+                    distance_to_center=distance_to_center,
+                ),
+                0.52,
             ),
-            "270": self.create_transformation_matrix(
-                yaw_degrees=270, height=height, distance_to_center=distance_to_center
+            "270": (
+                self.create_transformation_matrix(
+                    yaw_degrees=270,
+                    height=height,
+                    distance_to_center=distance_to_center,
+                ),
+                0.52,
             ),
-            "top": np.array(
-                [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 0.0, -1.0, 0.0],
-                    [0.0, 1.0, 0.0, 3.5],
-                    [0.0, 0.0, 0.0, 1.0],
-                ]
+            "top": (
+                np.array(
+                    [
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 0.0, -1.0, 0.0],
+                        [0.0, 1.0, 0.0, 4.5],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]
+                ),
+                0.35,
             ),
         }
-        for name, extrinsic_matrix in extrinsic_matrices.items():
+        for name, (extrinsic_matrix, aspect_ratio) in extrinsic_matrices.items():
             self._export_visualization(
                 deformation_network,
                 name,
+                aspect_ratio,
                 extrinsic_matrix,
                 initial_gaussian_cloud_parameters,
                 means_norm,
