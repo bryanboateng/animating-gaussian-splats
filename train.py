@@ -32,7 +32,7 @@ from deformation_network import (
 
 
 @dataclass
-class Create(Command):
+class Trainer(Command):
     sequence_name: str = MISSING
     data_directory_path: str = MISSING
     learning_rate: float = 0.01
@@ -115,7 +115,7 @@ class Create(Command):
         )
 
         foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
-        inverted_foreground_rotations = Create._get_inverted_foreground_rotations(
+        inverted_foreground_rotations = Trainer._get_inverted_foreground_rotations(
             current_rotations, foreground_mask
         )
         foreground_means = current_means[foreground_mask]
@@ -500,7 +500,7 @@ class Create(Command):
 
 
 def main():
-    command = Create.__new__(Create)
+    command = Trainer.__new__(Trainer)
     command.parse_args()
     command.run()
 
