@@ -102,7 +102,7 @@ def update_parameters(
             dim=1,
         ),
         torch.cat((normalized_means, normalized_rotations), dim=1),
-        torch.tensor(timestep).cuda(),
+        timestep,
     )
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
