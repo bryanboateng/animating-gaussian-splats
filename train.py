@@ -420,7 +420,7 @@ class Trainer(Command):
         camera_count = len(dataset_metadata["fn"][0])
         for i in tqdm(range(self.iteration_count), desc="Training"):
             timestep = i % timestep_count
-            camera_index = torch.randint(0, camera_count, (1,))
+            camera_index = torch.randint(0, camera_count, ())
 
             if timestep == 0:
                 self._update_previous_timestep_gaussian_cloud_state(
