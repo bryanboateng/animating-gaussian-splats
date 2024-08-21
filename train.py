@@ -446,7 +446,7 @@ class Trainer(Command):
                 timestep_count=timestep_count,
             )
 
-            total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
+            image_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                 target_view=view,
                 initial_neighborhoods=initial_neighborhoods,
@@ -457,7 +457,7 @@ class Trainer(Command):
             )
             wandb.log(
                 {
-                    f"total-loss": total_loss.item(),
+                    f"total-loss": image_loss.item(),
                     f"l1-loss": l1_loss.item(),
                     f"ssim-loss": ssim_loss.item(),
                     f"image-loss": image_loss.item(),
@@ -471,7 +471,7 @@ class Trainer(Command):
                 neighborhood_indices=initial_neighborhoods.indices,
             )
 
-            total_loss.backward()
+            image_loss.backward()
 
             optimizer.step()
             scheduler.step()
@@ -479,7 +479,7 @@ class Trainer(Command):
         for timestep in tqdm(
             range(timestep_count), desc="Calculate Mean Image Loss per Timestep"
         ):
-            losses = []
+            image_losses = []
             with torch.no_grad():
                 updated_gaussian_cloud_parameters = update_parameters(
                     deformation_network=deformation_network,
@@ -497,12 +497,15 @@ class Trainer(Command):
                     self.sequence_name,
                 )
                 for view in timestep_views:
-                    total_loss = calculate_image_loss(
+                    _, _, image_loss = calculate_image_loss(
                         gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                         target_view=view,
                     )
-                    losses.append(total_loss.item())
-            wandb.log({f"mean-image-loss": sum(losses) / len(losses)}, step=timestep)
+                    image_losses.append(image_loss.item())
+            wandb.log(
+                {f"mean-image-loss": sum(image_losses) / len(image_losses)},
+                step=timestep,
+            )
         with torch.no_grad():
             self._export_deformation_network(
                 initial_gaussian_cloud_parameters, deformation_network, timestep_count
