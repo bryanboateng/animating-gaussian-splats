@@ -24,7 +24,7 @@ from commons.helpers import (
     load_timestep_views,
     load_view,
 )
-from commons.loss import calculate_full_loss, GaussianCloud
+from commons.loss import calculate_loss, GaussianCloud, calculate_image_loss
 from deformation_network import (
     update_parameters,
     DeformationNetwork,
@@ -445,7 +445,8 @@ class Trainer(Command):
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
-            loss = calculate_full_loss(
+
+            total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                 target_view=view,
                 initial_neighborhoods=initial_neighborhoods,
@@ -454,26 +455,41 @@ class Trainer(Command):
                     2.0 / (1.0 + math.exp(-6 * (i / self.iteration_count))) - 1
                 ),
             )
+            wandb.log(
+                {
+                    f"total-loss": total_loss.item(),
+                    f"l1-loss": l1_loss.item(),
+                    f"ssim-loss": ssim_loss.item(),
+                    f"image-loss": image_loss.item(),
+                    f"rigidity-loss": rigidity_loss.item(),
+                    f"learning_rate": optimizer.param_groups[0]["lr"],
+                }
+            )
             self._update_previous_timestep_gaussian_cloud_state(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                 previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
                 neighborhood_indices=initial_neighborhoods.indices,
             )
-            wandb.log(
-                {
-                    f"loss-random": loss.item(),
-                    f"lr": optimizer.param_groups[0]["lr"],
-                }
-            )
 
-            loss.backward()
+            total_loss.backward()
 
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
-        for timestep in tqdm(range(timestep_count), desc="Calculate Average Image Loss per Timestep"):
+        for timestep in tqdm(
+            range(timestep_count), desc="Calculate Mean Image Loss per Timestep"
+        ):
             losses = []
             with torch.no_grad():
+                updated_gaussian_cloud_parameters = update_parameters(
+                    deformation_network=deformation_network,
+                    positional_encoding=pos_smol,
+                    normalized_means=normalized_means,
+                    normalized_rotations=normalized_rotations,
+                    parameters=initial_gaussian_cloud_parameters,
+                    timestep=timestep,
+                    timestep_count=timestep_count,
+                )
                 timestep_views = load_timestep_views(
                     dataset_metadata,
                     timestep,
@@ -481,15 +497,12 @@ class Trainer(Command):
                     self.sequence_name,
                 )
                 for view in timestep_views:
-                    loss = calculate_full_loss(
+                    total_loss = calculate_image_loss(
                         gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                         target_view=view,
-                        initial_neighborhoods=initial_neighborhoods,
-                        previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
-                        rigidity_loss_weight=1.0,
                     )
-                    losses.append(loss.item())
-            wandb.log({f"mean-timestep-losses": sum(losses) / len(losses)})
+                    losses.append(total_loss.item())
+            wandb.log({f"mean-image-loss": sum(losses) / len(losses)}, step=timestep)
         with torch.no_grad():
             self._export_deformation_network(
                 initial_gaussian_cloud_parameters, deformation_network, timestep_count

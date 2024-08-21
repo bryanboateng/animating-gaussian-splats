@@ -221,22 +221,15 @@ def _calculate_rigidity_loss(
     )
 
 
-def calculate_full_loss(
+def calculate_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
     initial_neighborhoods: Neighborhoods,
     previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
     rigidity_loss_weight,
 ):
-    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
-    (
-        rendered_image,
-        _,
-        _,
-    ) = Renderer(
-        raster_settings=target_view.camera.gaussian_rasterization_settings
-    )(**gaussian_cloud.get_renderer_format())
 
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
     foreground_mask = (
         gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
     ).detach()
@@ -246,21 +239,31 @@ def calculate_full_loss(
         initial_neighborhoods=initial_neighborhoods,
         previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
     )
+    l1_loss, ssim_loss, image_loss = calculate_image_loss(
+        gaussian_cloud_parameters, target_view
+    )
+    return (
+        image_loss + 3 * rigidity_loss_weight * rigidity_loss,
+        l1_loss,
+        ssim_loss,
+        image_loss,
+        rigidity_loss,
+    )
 
+
+def calculate_image_loss(gaussian_cloud_parameters, target_view):
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+    (
+        rendered_image,
+        _,
+        _,
+    ) = Renderer(
+        raster_settings=target_view.camera.gaussian_rasterization_settings
+    )(**gaussian_cloud.get_renderer_format())
     image = _apply_exponential_transform_and_center_to_image(
         rendered_image, gaussian_cloud_parameters, target_view.camera.id_
     )
     l1_loss = _l1_loss_v1(image, target_view.image)
     ssim_loss = 1.0 - calc_ssim(image, target_view.image)
     image_loss = 0.8 * l1_loss + 0.2 * ssim_loss
-
-    wandb.log(
-        {
-            f"loss-l1": l1_loss.item(),
-            f"loss-ssim": ssim_loss.item(),
-            f"loss-image": image_loss.item(),
-            f"loss-rigid": rigidity_loss.item(),
-        }
-    )
-
-    return image_loss + 3 * rigidity_loss_weight * rigidity_loss
+    return l1_loss, ssim_loss, image_loss
