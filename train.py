@@ -22,6 +22,7 @@ from commons.command import Command
 from commons.helpers import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
+    load_view,
 )
 from commons.loss import calculate_full_loss, GaussianCloud
 from deformation_network import (
@@ -171,19 +172,6 @@ class Trainer(Command):
             return sequence_length
         else:
             return min(sequence_length, self.timestep_count_limit)
-
-    def _load_all_views(self, dataset_metadata, timestep_count):
-        views = []
-        for timestep in range(1, timestep_count + 1):
-            views += [
-                load_timestep_views(
-                    dataset_metadata,
-                    timestep,
-                    self.data_directory_path,
-                    self.sequence_name,
-                )
-            ]
-        return views
 
     def _export_deformation_network(
         self,
@@ -429,10 +417,10 @@ class Trainer(Command):
         normalized_means, pos_smol, normalized_rotations = (
             normalize_means_and_rotations(initial_gaussian_cloud_parameters)
         )
-        views = self._load_all_views(dataset_metadata, timestep_count)
+        camera_count = len(dataset_metadata["fn"][0])
         for i in tqdm(range(self.iteration_count), desc="Training"):
             timestep = i % timestep_count
-            camera_index = torch.randint(0, len(views[0]), (1,))
+            camera_index = torch.randint(0, camera_count, (1,))
 
             if timestep == 0:
                 self._update_previous_timestep_gaussian_cloud_state(
@@ -441,7 +429,13 @@ class Trainer(Command):
                     neighborhood_indices=initial_neighborhoods.indices,
                 )
 
-            view = views[timestep][camera_index]
+            view = load_view(
+                dataset_metadata=dataset_metadata,
+                timestep=timestep,
+                camera_index=camera_index,
+                data_directory_path=self.data_directory_path,
+                sequence_name=self.sequence_name,
+            )
             updated_gaussian_cloud_parameters = update_parameters(
                 deformation_network=deformation_network,
                 positional_encoding=pos_smol,
@@ -477,9 +471,15 @@ class Trainer(Command):
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
-        for timestep_views in views:
+        for timestep in tqdm(range(timestep_count), desc="Calculate Average Image Loss per Timestep"):
             losses = []
             with torch.no_grad():
+                timestep_views = load_timestep_views(
+                    dataset_metadata,
+                    timestep,
+                    self.data_directory_path,
+                    self.sequence_name,
+                )
                 for view in timestep_views:
                     loss = calculate_full_loss(
                         gaussian_cloud_parameters=updated_gaussian_cloud_parameters,

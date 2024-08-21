@@ -31,66 +31,78 @@ def compute_knn_indices_and_squared_distances(numpy_point_cloud: np.ndarray, k: 
     return np.array(indices_list), np.array(squared_distances_list)
 
 
+def load_view(
+    dataset_metadata, timestep, camera_index, data_directory_path, sequence_name
+):
+    filename = dataset_metadata["fn"][timestep][camera_index]
+    segmentation_mask = (
+        torch.tensor(
+            np.array(
+                copy.deepcopy(
+                    Image.open(
+                        os.path.join(
+                            data_directory_path,
+                            sequence_name,
+                            "seg",
+                            filename.replace(".jpg", ".png"),
+                        )
+                    )
+                )
+            ).astype(np.float32)
+        )
+        .float()
+        .cuda()
+    )
+    return View(
+        camera=Camera(
+            id_=camera_index,
+            image_width=dataset_metadata["w"],
+            image_height=dataset_metadata["h"],
+            near_clipping_plane_distance=1,
+            far_clipping_plane_distance=100,
+            intrinsic_matrix=dataset_metadata["k"][timestep][camera_index],
+            extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
+        ),
+        image=torch.tensor(
+            np.array(
+                copy.deepcopy(
+                    Image.open(
+                        os.path.join(
+                            data_directory_path,
+                            sequence_name,
+                            "ims",
+                            filename,
+                        )
+                    )
+                )
+            )
+        )
+        .float()
+        .cuda()
+        .permute(2, 0, 1)
+        / 255,
+        segmentation_mask=torch.stack(
+            (
+                segmentation_mask,
+                torch.zeros_like(segmentation_mask),
+                1 - segmentation_mask,
+            )
+        ),
+    )
+
+
 def load_timestep_views(
     dataset_metadata, timestep: int, data_directory_path: str, sequence_name: str
 ):
     timestep_data = []
     for camera_index in range(len(dataset_metadata["fn"][timestep])):
-        filename = dataset_metadata["fn"][timestep][camera_index]
-        segmentation_mask = (
-            torch.tensor(
-                np.array(
-                    copy.deepcopy(
-                        Image.open(
-                            os.path.join(
-                                data_directory_path,
-                                sequence_name,
-                                "seg",
-                                filename.replace(".jpg", ".png"),
-                            )
-                        )
-                    )
-                ).astype(np.float32)
-            )
-            .float()
-            .cuda()
-        )
         timestep_data.append(
-            View(
-                camera=Camera(
-                    id_=camera_index,
-                    image_width=dataset_metadata["w"],
-                    image_height=dataset_metadata["h"],
-                    near_clipping_plane_distance=1,
-                    far_clipping_plane_distance=100,
-                    intrinsic_matrix=dataset_metadata["k"][timestep][camera_index],
-                    extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
-                ),
-                image=torch.tensor(
-                    np.array(
-                        copy.deepcopy(
-                            Image.open(
-                                os.path.join(
-                                    data_directory_path,
-                                    sequence_name,
-                                    "ims",
-                                    filename,
-                                )
-                            )
-                        )
-                    )
-                )
-                .float()
-                .cuda()
-                .permute(2, 0, 1)
-                / 255,
-                segmentation_mask=torch.stack(
-                    (
-                        segmentation_mask,
-                        torch.zeros_like(segmentation_mask),
-                        1 - segmentation_mask,
-                    )
-                ),
+            load_view(
+                dataset_metadata,
+                timestep,
+                camera_index,
+                data_directory_path,
+                sequence_name,
             )
         )
     return timestep_data
