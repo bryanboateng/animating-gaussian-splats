@@ -504,7 +504,7 @@ class Trainer(Command):
                     image_losses.append(image_loss.item())
             wandb.log(
                 {f"mean-image-loss": sum(image_losses) / len(image_losses)},
-                step=timestep,
+                step=self.iteration_count + timestep,
             )
         with torch.no_grad():
             self._export_deformation_network(
