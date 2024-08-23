@@ -449,7 +449,7 @@ def train(config: Config):
             timestep_count=timestep_count,
         )
 
-        image_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
+        total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_view=view,
             initial_neighborhoods=initial_neighborhoods,
@@ -474,7 +474,7 @@ def train(config: Config):
             neighborhood_indices=initial_neighborhoods.indices,
         )
 
-        image_loss.backward()
+        total_loss.backward()
 
         optimizer.step()
         scheduler.step()
