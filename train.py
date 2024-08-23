@@ -45,32 +45,6 @@ class Config:
     fps: int
 
 
-def parse_config_arguments(config: Config):
-    def extract_type(optional_type: Type) -> Type:
-        if (
-            hasattr(optional_type, "__origin__")
-            and optional_type.__origin__ is Optional
-        ):
-            return get_args(optional_type)[0]
-        return optional_type
-
-    argument_parser = argparse.ArgumentParser(prog="Animating Gaussian Splats - Train")
-    for field in fields(config):
-        non_optional_type = extract_type(field.type)
-        if field.default == MISSING:
-            argument_parser.add_argument(field.name, type=non_optional_type)
-        else:
-            if non_optional_type == bool:
-                argument_parser.add_argument(f"--{field.name}", action="store_true")
-            else:
-                argument_parser.add_argument(
-                    f"--{field.name}", type=non_optional_type, default=field.default
-                )
-    args = argument_parser.parse_args()
-    for field in fields(config):
-        setattr(config, field.name, getattr(args, field.name))
-
-
 def get_timestep_count(dataset_metadata, timestep_count_limit: int):
     sequence_length = len(dataset_metadata["fn"])
     if timestep_count_limit is None:
