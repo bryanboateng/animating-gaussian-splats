@@ -460,11 +460,11 @@ def train(config: Config):
         )
         wandb.log(
             {
-                f"total-loss": image_loss.item(),
-                f"l1-loss": l1_loss.item(),
-                f"ssim-loss": ssim_loss.item(),
-                f"image-loss": image_loss.item(),
-                f"rigidity-loss": rigidity_loss.item(),
+                f"loss-total": total_loss.item(),
+                f"loss-l1": l1_loss.item(),
+                f"loss-ssim": ssim_loss.item(),
+                f"loss-image": image_loss.item(),
+                f"loss-rigidity": rigidity_loss.item(),
                 f"learning_rate": optimizer.param_groups[0]["lr"],
             }
         )
