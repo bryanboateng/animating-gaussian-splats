@@ -35,14 +35,14 @@ from deformation_network import (
 
 @dataclass
 class Config:
-    sequence_name: str = MISSING
-    data_directory_path: Path = MISSING
-    learning_rate: float = 0.01
-    timestep_count_limit: Optional[int] = None
-    output_directory_path: Path = Path("./deformation_networks")
-    iteration_count: int = 200_000
-    warmup_iteration_ratio: float = 0.075
-    fps: int = 30
+    sequence_name: str
+    data_directory_path: Path
+    learning_rate: float
+    timestep_count_limit: Optional[int]
+    output_directory_path: Path
+    iteration_count: int
+    warmup_iteration_ratio: float
+    fps: int
 
 
 def parse_config_arguments(config: Config):
@@ -530,9 +530,35 @@ def train(config: Config):
 
 
 def main():
-    config = Config()
-    parse_config_arguments(config=config)
-    train(config=config)
+    argument_parser = argparse.ArgumentParser(prog="Animating Gaussian Splats")
+    argument_parser.add_argument("sequence_name", metavar="sequence-name", type=str)
+    argument_parser.add_argument(
+        "data_directory_path", metavar="data-directory-path", type=Path
+    )
+    argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
+    argument_parser.add_argument("-t", "--timestep-count-limit", type=int)
+    argument_parser.add_argument(
+        "-o",
+        "--output-directory-path",
+        type=Path,
+        default=Path("./deformation_networks"),
+    )
+    argument_parser.add_argument("-is", "--iteration_count", type=int, default=200_000)
+    argument_parser.add_argument(
+        "-wr", "--warmup_iteration_ratio", type=float, default=0.075
+    )
+    argument_parser.add_argument("--fps", type=int, default=30)
+    args = argument_parser.parse_args()
+    config = Config(
+        sequence_name=args.sequence_name,
+        data_directory_path=args.data_directory_path,
+        learning_rate=args.learning_rate,
+        timestep_count_limit=args.timestep_count_limit,
+        output_directory_path=args.output_directory_path,
+        iteration_count=args.iteration_count,
+        warmup_iteration_ratio=args.warmup_iteration_ratio,
+        fps=args.fps,
+    )
 
 
 if __name__ == "__main__":
