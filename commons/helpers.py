@@ -1,5 +1,5 @@
 import copy
-import os
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
@@ -32,21 +32,17 @@ def compute_knn_indices_and_squared_distances(numpy_point_cloud: np.ndarray, k: 
 
 
 def load_view(
-    dataset_metadata, timestep, camera_index, data_directory_path, sequence_name
+    dataset_metadata,
+    timestep,
+    camera_index,
+    sequence_path: Path,
 ):
     filename = dataset_metadata["fn"][timestep][camera_index]
     segmentation_mask = (
         torch.tensor(
             np.array(
                 copy.deepcopy(
-                    Image.open(
-                        os.path.join(
-                            data_directory_path,
-                            sequence_name,
-                            "seg",
-                            filename.replace(".jpg", ".png"),
-                        )
-                    )
+                    Image.open(sequence_path / "seg" / filename.replace(".jpg", ".png"))
                 )
             ).astype(np.float32)
         )
@@ -64,18 +60,7 @@ def load_view(
             extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
         ),
         image=torch.tensor(
-            np.array(
-                copy.deepcopy(
-                    Image.open(
-                        os.path.join(
-                            data_directory_path,
-                            sequence_name,
-                            "ims",
-                            filename,
-                        )
-                    )
-                )
-            )
+            np.array(copy.deepcopy(Image.open(sequence_path / "ims" / filename)))
         )
         .float()
         .cuda()
@@ -91,18 +76,15 @@ def load_view(
     )
 
 
-def load_timestep_views(
-    dataset_metadata, timestep: int, data_directory_path: str, sequence_name: str
-):
+def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
     timestep_data = []
     for camera_index in range(len(dataset_metadata["fn"][timestep])):
         timestep_data.append(
             load_view(
-                dataset_metadata,
-                timestep,
-                camera_index,
-                data_directory_path,
-                sequence_name,
+                dataset_metadata=dataset_metadata,
+                timestep=timestep,
+                camera_index=camera_index,
+                sequence_path=sequence_path,
             )
         )
     return timestep_data
