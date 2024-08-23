@@ -559,6 +559,7 @@ def main():
         warmup_iteration_ratio=args.warmup_iteration_ratio,
         fps=args.fps,
     )
+    train(config=config)
 
 
 if __name__ == "__main__":
