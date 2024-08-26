@@ -202,7 +202,6 @@ def add_segmentation_loss(
     losses["seg"] = 0.8 * l1_loss_v1(
         segmentation_mask, target_view.segmentation_mask
     ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_view.segmentation_mask))
-    return gaussian_cloud
 
 
 def update_max_2d_radii_and_visibility_mask(
@@ -246,7 +245,7 @@ def calculate_image_and_segmentation_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
         target_view=target_view,
     )
-    _ = add_segmentation_loss(
+    add_segmentation_loss(
         losses=losses,
         gaussian_cloud_parameters=gaussian_cloud_parameters,
         target_view=target_view,
