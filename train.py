@@ -1,35 +1,31 @@
 import argparse
+import copy
 import json
 import math
-from dataclasses import dataclass, MISSING, fields
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, get_args, Type
+from typing import Optional
 
 import imageio
 import numpy as np
 import torch
 import wandb
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
+from torch import nn
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from tqdm import tqdm
 
-from commons.classes import (
-    GaussianCloudReferenceState,
-    Neighborhoods,
-    GaussianCloudParameters,
-    Camera,
-)
-from commons.helpers import (
+from external import calc_ssim, build_rotation
+from shared import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
     load_view,
-)
-from commons.loss import calculate_loss, GaussianCloud, calculate_image_loss
-from deformation_network import (
-    update_parameters,
-    DeformationNetwork,
-    normalize_means_and_rotations,
-    PositionalEncoding,
+    GaussianCloudParameters,
+    Camera,
+    GaussianCloud,
+    View,
+    apply_exponential_transform_and_center_to_image,
+    l1_loss_v1,
 )
 
 
@@ -43,6 +39,81 @@ class Config:
     iteration_count: int
     warmup_iteration_ratio: float
     fps: int
+
+
+@dataclass
+class Neighborhoods:
+    distances: torch.Tensor
+    weights: torch.Tensor
+    indices: torch.Tensor
+
+
+@dataclass
+class GaussianCloudReferenceState:
+    means: torch.Tensor
+    rotations: torch.Tensor
+    inverted_foreground_rotations: Optional[torch.Tensor] = None
+    offsets_to_neighbors: Optional[torch.Tensor] = None
+    colors: Optional[torch.Tensor] = None
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, dimension) -> None:
+        super(ResidualBlock, self).__init__()
+        self.fc1 = nn.Linear(dimension, dimension, bias=False)
+        self.bn1 = nn.BatchNorm1d(dimension)
+        self.fc2 = nn.Linear(dimension, dimension, bias=False)
+        self.bn2 = nn.BatchNorm1d(dimension)
+
+    def forward(self, x):
+        identity = x
+
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = nn.functional.gelu(x)
+        x = self.fc2(x)
+        x = self.bn2(x)
+
+        x += identity
+        x = nn.functional.gelu(x)
+
+        return x
+
+
+class DeformationNetwork(nn.Module):
+    def __init__(self) -> None:
+        super(DeformationNetwork, self).__init__()
+        hidden_dimension = 128
+        self.fc_in = nn.Linear(100, hidden_dimension)
+        self.residual_blocks = nn.Sequential(
+            *(ResidualBlock(hidden_dimension) for _ in range(6))
+        )
+        self.fc_out = nn.Linear(hidden_dimension, 7)
+
+    def forward(self, input_, normalized_input, timestep):
+        out = torch.cat((normalized_input, timestep), dim=1)
+        out = self.fc_in(out)
+        out = self.residual_blocks(out)
+        out = self.fc_out(out)
+
+        out += input_
+
+        return out
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, L):
+        super(PositionalEncoding, self).__init__()
+        self.L = L
+        self.consts = ((torch.ones(L) * 2).pow(torch.arange(L)) * torch.pi).cuda()
+
+    def forward(self, x):
+        x = x[:, :, None]
+        A = (self.consts * x).repeat_interleave(2, 2)
+        A[:, :, ::2] = torch.sin(A[:, :, ::2])
+        A[:, :, 1::2] = torch.cos(A[:, :, ::2])
+
+        return A.permute(0, 2, 1).flatten(start_dim=1)
 
 
 def get_timestep_count(dataset_metadata, timestep_count_limit: int):
@@ -116,6 +187,22 @@ def initialize_post_first_timestep(
     return neighborhoods, previous_timestep_gaussian_cloud_state
 
 
+def normalize_means_and_rotations(gaussian_cloud_parameters: GaussianCloudParameters):
+    means = gaussian_cloud_parameters.means
+    rotations = gaussian_cloud_parameters.rotation_quaternions
+    means_offset = means - means.min(dim=0).values
+    normalized_means = (2.0 * means_offset / means_offset.max(dim=0).values) - 1.0
+    rotations_offset = rotations - rotations.min(dim=0).values
+    normalized_rotations = (
+        2.0 * rotations_offset / rotations_offset.max(dim=0).values
+    ) - 1.0
+    means_encoder = PositionalEncoding(L=10)
+    rotations_encoder = PositionalEncoding(L=4)
+    encoded_means = means_encoder(normalized_means)
+    encoded_rotations = rotations_encoder(normalized_rotations)
+    return encoded_means, rotations_encoder, encoded_rotations
+
+
 def get_inverted_foreground_rotations(
     rotations: torch.Tensor, foreground_mask: torch.Tensor
 ):
@@ -154,6 +241,131 @@ def update_previous_timestep_gaussian_cloud_state(
     previous_timestep_gaussian_cloud_state.means = current_means.detach().clone()
     previous_timestep_gaussian_cloud_state.rotations = (
         current_rotations.detach().clone()
+    )
+
+
+def update_parameters(
+    deformation_network: DeformationNetwork,
+    positional_encoding: PositionalEncoding,
+    normalized_means,
+    normalized_rotations,
+    parameters: GaussianCloudParameters,
+    timestep,
+    timestep_count,
+):
+    timestep = positional_encoding(
+        torch.tensor((timestep + 1) / timestep_count)
+        .view(1, 1)
+        .repeat(normalized_means.shape[0], 1)
+        .cuda()
+    )
+    delta = deformation_network(
+        torch.cat(
+            (parameters.means, parameters.rotation_quaternions),
+            dim=1,
+        ),
+        torch.cat((normalized_means, normalized_rotations), dim=1),
+        timestep,
+    )
+    means_delta = delta[:, :3]
+    rotations_delta = delta[:, 3:]
+    updated_parameters = copy.deepcopy(parameters)
+    updated_parameters.means = updated_parameters.means.detach()
+    updated_parameters.means += means_delta * 0.01
+    updated_parameters.rotation_quaternions = (
+        updated_parameters.rotation_quaternions.detach()
+    )
+    updated_parameters.rotation_quaternions += rotations_delta * 0.01
+    return updated_parameters
+
+
+def quat_mult(q1, q2):
+    w1, x1, y1, z1 = q1.T
+    w2, x2, y2, z2 = q2.T
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+    return torch.stack([w, x, y, z]).T
+
+
+def weighted_l2_loss_v2(x, y, w):
+    return torch.sqrt(((x - y) ** 2).sum(-1) * w + 1e-20).mean()
+
+
+def calculate_rigidity_loss(
+    gaussian_cloud,
+    foreground_mask,
+    initial_neighborhoods,
+    previous_timestep_gaussian_cloud_state,
+):
+    foreground_means = gaussian_cloud.means_3d[foreground_mask]
+    foreground_rotations = gaussian_cloud.rotations[foreground_mask]
+    relative_rotation_quaternion = quat_mult(
+        foreground_rotations,
+        previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
+    )
+    rotation_matrix = build_rotation(relative_rotation_quaternion)
+    foreground_neighbor_means = foreground_means[initial_neighborhoods.indices]
+    foreground_offset_to_neighbors = (
+        foreground_neighbor_means - foreground_means[:, None]
+    )
+    curr_offset_in_prev_coord = (
+        rotation_matrix.transpose(2, 1)[:, None]
+        @ foreground_offset_to_neighbors[:, :, :, None]
+    ).squeeze(-1)
+    return weighted_l2_loss_v2(
+        curr_offset_in_prev_coord,
+        previous_timestep_gaussian_cloud_state.offsets_to_neighbors,
+        initial_neighborhoods.weights,
+    )
+
+
+def calculate_image_loss(gaussian_cloud_parameters, target_view):
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+    (
+        rendered_image,
+        _,
+        _,
+    ) = Renderer(
+        raster_settings=target_view.camera.gaussian_rasterization_settings
+    )(**gaussian_cloud.get_renderer_format())
+    image = apply_exponential_transform_and_center_to_image(
+        rendered_image, gaussian_cloud_parameters, target_view.camera.id_
+    )
+    l1_loss = l1_loss_v1(image, target_view.image)
+    ssim_loss = 1.0 - calc_ssim(image, target_view.image)
+    image_loss = 0.8 * l1_loss + 0.2 * ssim_loss
+    return l1_loss, ssim_loss, image_loss
+
+
+def calculate_loss(
+    gaussian_cloud_parameters: GaussianCloudParameters,
+    target_view: View,
+    initial_neighborhoods: Neighborhoods,
+    previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
+    rigidity_loss_weight,
+):
+
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+    foreground_mask = (
+        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
+    ).detach()
+    rigidity_loss = calculate_rigidity_loss(
+        gaussian_cloud=gaussian_cloud,
+        foreground_mask=foreground_mask,
+        initial_neighborhoods=initial_neighborhoods,
+        previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
+    )
+    l1_loss, ssim_loss, image_loss = calculate_image_loss(
+        gaussian_cloud_parameters, target_view
+    )
+    return (
+        image_loss + 3 * rigidity_loss_weight * rigidity_loss,
+        l1_loss,
+        ssim_loss,
+        image_loss,
+        rigidity_loss,
     )
 
 

@@ -21,10 +21,7 @@ import torch
 import torch.nn.functional as func
 from torch.autograd import Variable
 
-from commons.classes import (
-    DensificationVariables,
-    GaussianCloudParameters,
-)
+from shared import GaussianCloudParameters, DensificationVariables
 
 
 def build_rotation(q):

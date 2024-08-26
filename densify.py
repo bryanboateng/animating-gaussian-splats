@@ -6,18 +6,20 @@ from random import randint
 import numpy as np
 import torch
 import wandb
+from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from tqdm import tqdm
 
-from commons.classes import (
-    DensificationVariables,
-    GaussianCloudParameters,
-)
-from commons.helpers import (
+from external import densify_gaussians, calc_ssim
+from shared import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
+    GaussianCloudParameters,
+    DensificationVariables,
+    View,
+    GaussianCloud,
+    l1_loss_v1,
+    apply_exponential_transform_and_center_to_image,
 )
-from commons.loss import calculate_image_and_segmentation_loss
-from external import densify_gaussians
 
 
 def create_trainable_parameter(v):
@@ -155,6 +157,105 @@ def save_and_log_checkpoint(
         sequence_path / "densified_initial_gaussian_cloud_parameters.pth"
     )
     torch.save(initial_gaussian_cloud_parameters, parameters_save_path)
+
+
+def add_image_loss_grad(
+    losses: dict[str, torch.Tensor],
+    gaussian_cloud_parameters: GaussianCloudParameters,
+    target_view: View,
+):
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+    gaussian_cloud.means_2d.retain_grad()
+    (
+        rendered_image,
+        radii,
+        _,
+    ) = Renderer(
+        raster_settings=target_view.camera.gaussian_rasterization_settings
+    )(**gaussian_cloud.get_renderer_format())
+    image = apply_exponential_transform_and_center_to_image(
+        rendered_image, gaussian_cloud_parameters, target_view.camera.id_
+    )
+    losses["im"] = 0.8 * l1_loss_v1(image, target_view.image) + 0.2 * (
+        1.0 - calc_ssim(image, target_view.image)
+    )
+    means_2d = (
+        gaussian_cloud.means_2d
+    )  # Gradient only accum from colour render for densification
+    return means_2d, radii
+
+
+def add_segmentation_loss(
+    losses: dict[str, torch.Tensor],
+    gaussian_cloud_parameters: GaussianCloudParameters,
+    target_view: View,
+):
+    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
+    gaussian_cloud.colors = gaussian_cloud_parameters.segmentation_colors
+    (
+        segmentation_mask,
+        _,
+        _,
+    ) = Renderer(
+        raster_settings=target_view.camera.gaussian_rasterization_settings
+    )(**gaussian_cloud.get_renderer_format())
+    losses["seg"] = 0.8 * l1_loss_v1(
+        segmentation_mask, target_view.segmentation_mask
+    ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_view.segmentation_mask))
+    return gaussian_cloud
+
+
+def update_max_2d_radii_and_visibility_mask(
+    radii, densification_variables: DensificationVariables
+):
+    radius_is_positive = radii > 0
+    densification_variables.max_2d_radii[radius_is_positive] = torch.max(
+        radii[radius_is_positive],
+        densification_variables.max_2d_radii[radius_is_positive],
+    )
+    densification_variables.gaussian_is_visible_mask = radius_is_positive
+
+
+def combine_losses(losses: dict[str, torch.Tensor]):
+    loss_weights = {
+        "im": 1.0,
+        "seg": 3.0,
+        "rigid": 4.0,
+        "rot": 4.0,
+        "iso": 2.0,
+        "floor": 2.0,
+        "bg": 20.0,
+        "soft_col_cons": 0.01,
+    }
+    weighted_losses = []
+    for name, value in losses.items():
+        weighted_loss = torch.tensor(loss_weights[name]) * value
+        wandb.log({f"{name}-loss": weighted_loss})
+        weighted_losses.append(weighted_loss)
+    return torch.sum(torch.stack(weighted_losses))
+
+
+def calculate_image_and_segmentation_loss(
+    gaussian_cloud_parameters: GaussianCloudParameters,
+    target_view: View,
+    densification_variables: DensificationVariables,
+):
+    losses = {}
+    means_2d, radii = add_image_loss_grad(
+        losses=losses,
+        gaussian_cloud_parameters=gaussian_cloud_parameters,
+        target_view=target_view,
+    )
+    _ = add_segmentation_loss(
+        losses=losses,
+        gaussian_cloud_parameters=gaussian_cloud_parameters,
+        target_view=target_view,
+    )
+    densification_variables.means_2d = means_2d
+    update_max_2d_radii_and_visibility_mask(
+        radii=radii, densification_variables=densification_variables
+    )
+    return combine_losses(losses), densification_variables
 
 
 def densify(sequence_path: Path):
