@@ -22,10 +22,10 @@ from shared import (
     load_view,
     GaussianCloudParameters,
     Camera,
-    GaussianCloud,
     View,
     apply_exponential_transform_and_center_to_image,
     l1_loss_v1,
+    create_render_arguments,
 )
 
 
@@ -294,13 +294,14 @@ def weighted_l2_loss_v2(x, y, w):
 
 
 def calculate_rigidity_loss(
-    gaussian_cloud,
+    gaussian_cloud_parameters,
     foreground_mask,
     initial_neighborhoods,
     previous_timestep_gaussian_cloud_state,
 ):
-    foreground_means = gaussian_cloud.means_3d[foreground_mask]
-    foreground_rotations = gaussian_cloud.rotations[foreground_mask]
+    render_arguments = create_render_arguments(gaussian_cloud_parameters)
+    foreground_means = render_arguments["means3D"][foreground_mask]
+    foreground_rotations = render_arguments["rotations"][foreground_mask]
     relative_rotation_quaternion = quat_mult(
         foreground_rotations,
         previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
@@ -322,14 +323,13 @@ def calculate_rigidity_loss(
 
 
 def calculate_image_loss(gaussian_cloud_parameters, target_view):
-    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
     (
         rendered_image,
         _,
         _,
     ) = Renderer(
         raster_settings=target_view.camera.gaussian_rasterization_settings
-    )(**gaussian_cloud.get_renderer_format())
+    )(**create_render_arguments(gaussian_cloud_parameters))
     image = apply_exponential_transform_and_center_to_image(
         rendered_image, gaussian_cloud_parameters, target_view.camera.id_
     )
@@ -347,12 +347,11 @@ def calculate_loss(
     rigidity_loss_weight,
 ):
 
-    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
     foreground_mask = (
         gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
     ).detach()
     rigidity_loss = calculate_rigidity_loss(
-        gaussian_cloud=gaussian_cloud,
+        gaussian_cloud_parameters=gaussian_cloud_parameters,
         foreground_mask=foreground_mask,
         initial_neighborhoods=initial_neighborhoods,
         previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
@@ -444,8 +443,6 @@ def export_visualization(
                 timestep_count=timestep_count,
             )
 
-        gaussian_cloud = GaussianCloud(parameters=timestep_gaussian_cloud_parameters)
-
         image_width = 1280
         image_height = 720
         camera = Camera(
@@ -469,7 +466,7 @@ def export_visualization(
             _,
         ) = Renderer(
             raster_settings=camera.gaussian_rasterization_settings
-        )(**gaussian_cloud.get_renderer_format())
+        )(**create_render_arguments(timestep_gaussian_cloud_parameters))
         render_images.append(
             (
                 255

@@ -105,6 +105,22 @@ class DensificationVariables:
     means_2d: torch.Tensor = None
 
 
+def create_render_arguments(gaussian_cloud_parameters: GaussianCloudParameters):
+    return {
+        "means3D": gaussian_cloud_parameters.means,
+        "colors_precomp": gaussian_cloud_parameters.rgb_colors,
+        "rotations": torch.nn.functional.normalize(
+            gaussian_cloud_parameters.rotation_quaternions
+        ),
+        "opacities": torch.sigmoid(gaussian_cloud_parameters.opacities_logits),
+        "scales": torch.exp(gaussian_cloud_parameters.log_scales),
+        "means2D": torch.zeros_like(
+            gaussian_cloud_parameters.means, requires_grad=True, device="cuda"
+        )
+        + 0,
+    }
+
+
 def compute_knn_indices_and_squared_distances(numpy_point_cloud: np.ndarray, k: int):
     indices_list = []
     squared_distances_list = []
@@ -181,33 +197,6 @@ def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
             )
         )
     return timestep_data
-
-
-class GaussianCloud:
-    def __init__(self, parameters: GaussianCloudParameters):
-        self.means_2d = (
-            torch.zeros_like(
-                parameters.means,
-                requires_grad=True,
-                device="cuda",
-            )
-            + 0
-        )
-        self.means_3d = parameters.means
-        self.colors = parameters.rgb_colors
-        self.rotations = torch.nn.functional.normalize(parameters.rotation_quaternions)
-        self.opacities = torch.sigmoid(parameters.opacities_logits)
-        self.scales = torch.exp(parameters.log_scales)
-
-    def get_renderer_format(self):
-        return {
-            "means3D": self.means_3d,
-            "colors_precomp": self.colors,
-            "rotations": self.rotations,
-            "opacities": self.opacities,
-            "scales": self.scales,
-            "means2D": self.means_2d,
-        }
 
 
 def apply_exponential_transform_and_center_to_image(

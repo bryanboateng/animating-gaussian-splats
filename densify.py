@@ -16,9 +16,9 @@ from shared import (
     GaussianCloudParameters,
     DensificationVariables,
     View,
-    GaussianCloud,
     l1_loss_v1,
     apply_exponential_transform_and_center_to_image,
+    create_render_arguments,
 )
 
 
@@ -164,24 +164,24 @@ def add_image_loss_grad(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
 ):
-    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
-    gaussian_cloud.means_2d.retain_grad()
+    render_arguments = create_render_arguments(gaussian_cloud_parameters)
+    render_arguments["means2D"].retain_grad()
     (
         rendered_image,
         radii,
         _,
     ) = Renderer(
         raster_settings=target_view.camera.gaussian_rasterization_settings
-    )(**gaussian_cloud.get_renderer_format())
+    )(**render_arguments)
     image = apply_exponential_transform_and_center_to_image(
         rendered_image, gaussian_cloud_parameters, target_view.camera.id_
     )
     losses["im"] = 0.8 * l1_loss_v1(image, target_view.image) + 0.2 * (
         1.0 - calc_ssim(image, target_view.image)
     )
-    means_2d = (
-        gaussian_cloud.means_2d
-    )  # Gradient only accum from colour render for densification
+    means_2d = render_arguments[
+        "means2D"
+    ]  # Gradient only accum from colour render for densification
     return means_2d, radii
 
 
@@ -190,15 +190,15 @@ def add_segmentation_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
 ):
-    gaussian_cloud = GaussianCloud(parameters=gaussian_cloud_parameters)
-    gaussian_cloud.colors = gaussian_cloud_parameters.segmentation_colors
+    render_arguments = create_render_arguments(gaussian_cloud_parameters)
+    render_arguments["colors_precomp"] = gaussian_cloud_parameters.segmentation_colors
     (
         segmentation_mask,
         _,
         _,
     ) = Renderer(
         raster_settings=target_view.camera.gaussian_rasterization_settings
-    )(**gaussian_cloud.get_renderer_format())
+    )(**render_arguments)
     losses["seg"] = 0.8 * l1_loss_v1(
         segmentation_mask, target_view.segmentation_mask
     ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_view.segmentation_mask))
