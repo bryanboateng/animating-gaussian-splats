@@ -307,9 +307,7 @@ def densify(sequence_path: Path):
 
 
 def main():
-    argument_parser = argparse.ArgumentParser(
-        prog="Animating Gaussian Splats - Densify"
-    )
+    argument_parser = argparse.ArgumentParser(prog="Densify Gaussian Cloud")
     argument_parser.add_argument("sequence_path", type=Path)
     args = argument_parser.parse_args()
     densify(sequence_path=args.sequence_path)
