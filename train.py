@@ -21,11 +21,11 @@ from shared import (
     load_timestep_views,
     load_view,
     GaussianCloudParameters,
-    Camera,
     View,
     apply_exponential_transform_and_center_to_image,
     l1_loss_v1,
     create_render_arguments,
+    create_render_settings,
 )
 
 
@@ -322,16 +322,16 @@ def calculate_rigidity_loss(
     )
 
 
-def calculate_image_loss(gaussian_cloud_parameters, target_view):
+def calculate_image_loss(gaussian_cloud_parameters, target_view: View):
     (
         rendered_image,
         _,
         _,
     ) = Renderer(
-        raster_settings=target_view.camera.gaussian_rasterization_settings
+        raster_settings=target_view.render_settings
     )(**create_render_arguments(gaussian_cloud_parameters))
     image = apply_exponential_transform_and_center_to_image(
-        rendered_image, gaussian_cloud_parameters, target_view.camera.id_
+        rendered_image, gaussian_cloud_parameters, target_view.camera_index
     )
     l1_loss = l1_loss_v1(image, target_view.image)
     ssim_loss = 1.0 - calc_ssim(image, target_view.image)
@@ -445,12 +445,9 @@ def export_visualization(
 
         image_width = 1280
         image_height = 720
-        camera = Camera(
-            id_=0,
+        render_settings = create_render_settings(
             image_width=image_width,
             image_height=image_height,
-            near_clipping_plane_distance=1,
-            far_clipping_plane_distance=100,
             intrinsic_matrix=np.array(
                 [
                     [aspect_ratio * image_width, 0, image_width / 2],
@@ -465,7 +462,7 @@ def export_visualization(
             _,
             _,
         ) = Renderer(
-            raster_settings=camera.gaussian_rasterization_settings
+            raster_settings=render_settings
         )(**create_render_arguments(timestep_gaussian_cloud_parameters))
         render_images.append(
             (

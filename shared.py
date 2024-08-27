@@ -9,74 +9,6 @@ from PIL import Image
 from diff_gaussian_rasterization import GaussianRasterizationSettings
 
 
-class Camera:
-    def __init__(
-        self,
-        id_: int,
-        image_width: int,
-        image_height: int,
-        near_clipping_plane_distance: float,
-        far_clipping_plane_distance: float,
-        intrinsic_matrix,
-        extrinsic_matrix,
-    ):
-        self.id_ = id_
-
-        focal_length_x, focal_length_y, principal_point_x, principal_point_y = (
-            intrinsic_matrix[0][0],
-            intrinsic_matrix[1][1],
-            intrinsic_matrix[0][2],
-            intrinsic_matrix[1][2],
-        )
-        extrinsic_matrix_tensor = torch.tensor(extrinsic_matrix).cuda().float()
-        camera_center = torch.inverse(extrinsic_matrix_tensor)[:3, 3]
-        extrinsic_matrix_tensor = extrinsic_matrix_tensor.unsqueeze(0).transpose(1, 2)
-        opengl_projection_matrix = (
-            torch.tensor(
-                [
-                    [
-                        2 * focal_length_x / image_width,
-                        0.0,
-                        -(image_width - 2 * principal_point_x) / image_width,
-                        0.0,
-                    ],
-                    [
-                        0.0,
-                        2 * focal_length_y / image_height,
-                        -(image_height - 2 * principal_point_y) / image_height,
-                        0.0,
-                    ],
-                    [
-                        0.0,
-                        0.0,
-                        far_clipping_plane_distance
-                        / (far_clipping_plane_distance - near_clipping_plane_distance),
-                        -(far_clipping_plane_distance * near_clipping_plane_distance)
-                        / (far_clipping_plane_distance - near_clipping_plane_distance),
-                    ],
-                    [0.0, 0.0, 1.0, 0.0],
-                ]
-            )
-            .cuda()
-            .float()
-            .unsqueeze(0)
-            .transpose(1, 2)
-        )
-        self.gaussian_rasterization_settings = GaussianRasterizationSettings(
-            image_height=image_height,
-            image_width=image_width,
-            tanfovx=image_width / (2 * focal_length_x),
-            tanfovy=image_height / (2 * focal_length_y),
-            bg=torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda"),
-            scale_modifier=1.0,
-            viewmatrix=extrinsic_matrix_tensor,
-            projmatrix=extrinsic_matrix_tensor.bmm(opengl_projection_matrix),
-            sh_degree=0,
-            campos=camera_center,
-            prefiltered=False,
-        )
-
-
 @dataclass
 class GaussianCloudParameters:
     means: torch.nn.Parameter
@@ -91,7 +23,8 @@ class GaussianCloudParameters:
 
 @dataclass
 class View:
-    camera: Camera
+    camera_index: int
+    render_settings: GaussianRasterizationSettings
     image: torch.Tensor
     segmentation_mask: torch.Tensor
 
@@ -140,6 +73,69 @@ def compute_knn_indices_and_squared_distances(numpy_point_cloud: np.ndarray, k: 
     return np.array(indices_list), np.array(squared_distances_list)
 
 
+def create_render_settings(
+    image_width: int,
+    image_height: int,
+    intrinsic_matrix,
+    extrinsic_matrix,
+    near_clipping_plane_distance: float = 0.01,
+    far_clipping_plane_distance: float = 100,
+):
+    focal_length_x, focal_length_y, principal_point_x, principal_point_y = (
+        intrinsic_matrix[0][0],
+        intrinsic_matrix[1][1],
+        intrinsic_matrix[0][2],
+        intrinsic_matrix[1][2],
+    )
+    extrinsic_matrix_tensor = torch.tensor(extrinsic_matrix).cuda().float()
+    camera_center = torch.inverse(extrinsic_matrix_tensor)[:3, 3]
+    extrinsic_matrix_tensor = extrinsic_matrix_tensor.unsqueeze(0).transpose(1, 2)
+    opengl_projection_matrix = (
+        torch.tensor(
+            [
+                [
+                    2 * focal_length_x / image_width,
+                    0.0,
+                    -(image_width - 2 * principal_point_x) / image_width,
+                    0.0,
+                ],
+                [
+                    0.0,
+                    2 * focal_length_y / image_height,
+                    -(image_height - 2 * principal_point_y) / image_height,
+                    0.0,
+                ],
+                [
+                    0.0,
+                    0.0,
+                    far_clipping_plane_distance
+                    / (far_clipping_plane_distance - near_clipping_plane_distance),
+                    -(far_clipping_plane_distance * near_clipping_plane_distance)
+                    / (far_clipping_plane_distance - near_clipping_plane_distance),
+                ],
+                [0.0, 0.0, 1.0, 0.0],
+            ]
+        )
+        .cuda()
+        .float()
+        .unsqueeze(0)
+        .transpose(1, 2)
+    )
+    return GaussianRasterizationSettings(
+        image_height=image_height,
+        image_width=image_width,
+        tanfovx=image_width / (2 * focal_length_x),
+        tanfovy=image_height / (2 * focal_length_y),
+        bg=torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda"),
+        scale_modifier=1.0,
+        viewmatrix=extrinsic_matrix_tensor,
+        projmatrix=extrinsic_matrix_tensor.bmm(opengl_projection_matrix),
+        sh_degree=0,
+        campos=camera_center,
+        prefiltered=False,
+    )
+
+
 def load_view(
     dataset_metadata,
     timestep,
@@ -159,12 +155,10 @@ def load_view(
         .cuda()
     )
     return View(
-        camera=Camera(
-            id_=camera_index,
+        camera_index=camera_index,
+        render_settings=create_render_settings(
             image_width=dataset_metadata["w"],
             image_height=dataset_metadata["h"],
-            near_clipping_plane_distance=1,
-            far_clipping_plane_distance=100,
             intrinsic_matrix=dataset_metadata["k"][timestep][camera_index],
             extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
         ),

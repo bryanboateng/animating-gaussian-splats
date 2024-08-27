@@ -171,10 +171,10 @@ def add_image_loss_grad(
         radii,
         _,
     ) = Renderer(
-        raster_settings=target_view.camera.gaussian_rasterization_settings
+        raster_settings=target_view.render_settings
     )(**render_arguments)
     image = apply_exponential_transform_and_center_to_image(
-        rendered_image, gaussian_cloud_parameters, target_view.camera.id_
+        rendered_image, gaussian_cloud_parameters, target_view.camera_index
     )
     losses["im"] = 0.8 * l1_loss_v1(image, target_view.image) + 0.2 * (
         1.0 - calc_ssim(image, target_view.image)
@@ -197,7 +197,7 @@ def add_segmentation_loss(
         _,
         _,
     ) = Renderer(
-        raster_settings=target_view.camera.gaussian_rasterization_settings
+        raster_settings=target_view.render_settings
     )(**render_arguments)
     losses["seg"] = 0.8 * l1_loss_v1(
         segmentation_mask, target_view.segmentation_mask
