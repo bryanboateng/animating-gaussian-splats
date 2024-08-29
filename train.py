@@ -187,20 +187,26 @@ def initialize_post_first_timestep(
     return neighborhoods, previous_timestep_gaussian_cloud_state
 
 
-def normalize_means_and_rotations(gaussian_cloud_parameters: GaussianCloudParameters):
+def encode_means_and_rotations(gaussian_cloud_parameters: GaussianCloudParameters):
     means = gaussian_cloud_parameters.means
     rotations = gaussian_cloud_parameters.rotation_quaternions
-    means_offset = means - means.min(dim=0).values
-    normalized_means = (2.0 * means_offset / means_offset.max(dim=0).values) - 1.0
-    rotations_offset = rotations - rotations.min(dim=0).values
-    normalized_rotations = (
-        2.0 * rotations_offset / rotations_offset.max(dim=0).values
+    normalized_means = means - means.min(dim=0).values
+    normalized_means = (
+        2.0 * normalized_means / normalized_means.max(dim=0).values
     ) - 1.0
-    means_encoder = PositionalEncoding(L=10)
-    rotations_encoder = PositionalEncoding(L=4)
-    encoded_means = means_encoder(normalized_means)
-    encoded_rotations = rotations_encoder(normalized_rotations)
-    return encoded_means, rotations_encoder, encoded_rotations
+    normalized_rotations = rotations - rotations.min(dim=0).values
+    normalized_rotations = (
+        2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
+    ) - 1.0
+    large_positional_encoding = PositionalEncoding(L=10)
+    small_positional_encoding = PositionalEncoding(L=4)
+    encoded_normalized_means = large_positional_encoding(normalized_means)
+    encoded_normalized_rotations = small_positional_encoding(normalized_rotations)
+    return (
+        encoded_normalized_means,
+        encoded_normalized_rotations,
+        small_positional_encoding,
+    )
 
 
 def get_inverted_foreground_rotations(
@@ -246,37 +252,42 @@ def update_previous_timestep_gaussian_cloud_state(
 
 def update_parameters(
     deformation_network: DeformationNetwork,
-    positional_encoding: PositionalEncoding,
-    normalized_means,
-    normalized_rotations,
-    parameters: GaussianCloudParameters,
+    initial_gaussian_cloud_parameters: GaussianCloudParameters,
+    small_positional_encoding: PositionalEncoding,
+    encoded_normalized_means,
+    encoded_normalized_rotations,
     timestep,
     timestep_count,
 ):
-    timestep = positional_encoding(
+    encoded_timestep = small_positional_encoding(
         torch.tensor((timestep + 1) / timestep_count)
         .view(1, 1)
-        .repeat(normalized_means.shape[0], 1)
+        .repeat(encoded_normalized_means.shape[0], 1)
         .cuda()
     )
     delta = deformation_network(
         torch.cat(
-            (parameters.means, parameters.rotation_quaternions),
+            (
+                initial_gaussian_cloud_parameters.means,
+                initial_gaussian_cloud_parameters.rotation_quaternions,
+            ),
             dim=1,
         ),
-        torch.cat((normalized_means, normalized_rotations), dim=1),
-        timestep,
+        torch.cat((encoded_normalized_means, encoded_normalized_rotations), dim=1),
+        encoded_timestep,
     )
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
-    updated_parameters = copy.deepcopy(parameters)
-    updated_parameters.means = updated_parameters.means.detach()
-    updated_parameters.means += means_delta * 0.01
-    updated_parameters.rotation_quaternions = (
-        updated_parameters.rotation_quaternions.detach()
+    updated_gaussian_cloud_parameters = copy.deepcopy(initial_gaussian_cloud_parameters)
+    updated_gaussian_cloud_parameters.means = (
+        updated_gaussian_cloud_parameters.means.detach()
     )
-    updated_parameters.rotation_quaternions += rotations_delta * 0.01
-    return updated_parameters
+    updated_gaussian_cloud_parameters.means += means_delta * 0.01
+    updated_gaussian_cloud_parameters.rotation_quaternions = (
+        updated_gaussian_cloud_parameters.rotation_quaternions.detach()
+    )
+    updated_gaussian_cloud_parameters.rotation_quaternions += rotations_delta * 0.01
+    return updated_gaussian_cloud_parameters
 
 
 def quat_mult(q1, q2):
@@ -418,9 +429,9 @@ def export_visualization(
     name: str,
     initial_gaussian_cloud_parameters,
     deformation_network: DeformationNetwork,
-    pos_smol: PositionalEncoding,
-    means_norm: torch.Tensor,
-    rotations_norm: torch.Tensor,
+    small_positional_encoding: PositionalEncoding,
+    encoded_normalized_means: torch.Tensor,
+    encoded_normalized_rotations: torch.Tensor,
     aspect_ratio: float,
     extrinsic_matrix: np.array,
     visualizations_directory_path: Path,
@@ -435,10 +446,10 @@ def export_visualization(
         else:
             timestep_gaussian_cloud_parameters = update_parameters(
                 deformation_network=deformation_network,
-                positional_encoding=pos_smol,
-                normalized_means=means_norm,
-                normalized_rotations=rotations_norm,
-                parameters=initial_gaussian_cloud_parameters,
+                initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+                small_positional_encoding=small_positional_encoding,
+                encoded_normalized_means=encoded_normalized_means,
+                encoded_normalized_rotations=encoded_normalized_rotations,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
@@ -501,9 +512,11 @@ def export_visualizations(
 
     deformation_network.eval()
 
-    means_norm, pos_smol, rotations_norm = normalize_means_and_rotations(
-        initial_gaussian_cloud_parameters
-    )
+    (
+        encoded_normalized_means,
+        encoded_normalized_rotations,
+        small_positional_encoding,
+    ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
 
     distance_to_center: float = 2.4
     height: float = 1.3
@@ -550,9 +563,9 @@ def export_visualizations(
             name=name,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             deformation_network=deformation_network,
-            pos_smol=pos_smol,
-            means_norm=means_norm,
-            rotations_norm=rotations_norm,
+            small_positional_encoding=small_positional_encoding,
+            encoded_normalized_means=encoded_normalized_means,
+            encoded_normalized_rotations=encoded_normalized_rotations,
             aspect_ratio=aspect_ratio,
             extrinsic_matrix=extrinsic_matrix,
             visualizations_directory_path=visualizations_directory_path,
@@ -598,9 +611,11 @@ def train(config: Config):
     ) = initialize_post_first_timestep(
         gaussian_cloud_parameters=initial_gaussian_cloud_parameters
     )
-    normalized_means, pos_smol, normalized_rotations = normalize_means_and_rotations(
-        initial_gaussian_cloud_parameters
-    )
+    (
+        encoded_normalized_means,
+        encoded_normalized_rotations,
+        small_positional_encoding,
+    ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
     camera_count = len(dataset_metadata["fn"][0])
     for i in tqdm(range(config.iteration_count), desc="Training"):
         timestep = i % timestep_count
@@ -621,10 +636,10 @@ def train(config: Config):
         )
         updated_gaussian_cloud_parameters = update_parameters(
             deformation_network=deformation_network,
-            positional_encoding=pos_smol,
-            normalized_means=normalized_means,
-            normalized_rotations=normalized_rotations,
-            parameters=initial_gaussian_cloud_parameters,
+            initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            small_positional_encoding=small_positional_encoding,
+            encoded_normalized_means=encoded_normalized_means,
+            encoded_normalized_rotations=encoded_normalized_rotations,
             timestep=timestep,
             timestep_count=timestep_count,
         )
@@ -666,10 +681,10 @@ def train(config: Config):
         with torch.no_grad():
             updated_gaussian_cloud_parameters = update_parameters(
                 deformation_network=deformation_network,
-                positional_encoding=pos_smol,
-                normalized_means=normalized_means,
-                normalized_rotations=normalized_rotations,
-                parameters=initial_gaussian_cloud_parameters,
+                initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+                small_positional_encoding=small_positional_encoding,
+                encoded_normalized_means=encoded_normalized_means,
+                encoded_normalized_rotations=encoded_normalized_rotations,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
