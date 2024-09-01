@@ -744,7 +744,7 @@ def main():
     argument_parser.add_argument(
         "-wi", "--warmup_iteration_count", type=int, default=15_000
     )
-    argument_parser.add_argument("--fps", type=int, default=30)
+    argument_parser.add_argument("-fps", type=int, default=30)
     args = argument_parser.parse_args()
     config = Config(
         sequence_name=args.sequence_name,
