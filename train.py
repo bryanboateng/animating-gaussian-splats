@@ -711,7 +711,6 @@ def train(config: Config):
         )
         export_visualizations(
             run_output_directory_path=run_output_directory_path,
-            sequence_name=config.sequence_name,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             deformation_network=deformation_network,
             timestep_count=timestep_count,
