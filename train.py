@@ -137,8 +137,7 @@ def load_densified_initial_parameters(data_directory_path: Path, sequence_name: 
     parameters: GaussianCloudParameters = torch.load(
         data_directory_path
         / sequence_name
-        / "densified_initial_gaussian_cloud_parameters.pth",
-        map_location="cuda",
+        / "densified_initial_gaussian_cloud_parameters.pth"
     )
     for parameter in parameters.__dict__.values():
         parameter.requires_grad = False
