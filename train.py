@@ -36,8 +36,8 @@ class Config:
     learning_rate: float
     timestep_count_limit: Optional[int]
     output_directory_path: Path
-    iteration_count: int
-    warmup_iteration_ratio: float
+    total_iteration_count: int
+    warmup_iteration_count: float
     fps: int
 
 
@@ -599,8 +599,8 @@ def train(config: Config):
     )
     scheduler = get_linear_warmup_cos_annealing(
         optimizer,
-        warmup_iters=int(config.iteration_count * config.warmup_iteration_ratio),
-        total_iters=config.iteration_count,
+        warmup_iters=int(config.total_iteration_count * config.warmup_iteration_count),
+        total_iters=config.total_iteration_count,
     )
 
     initial_gaussian_cloud_parameters = load_densified_initial_parameters(
@@ -620,7 +620,7 @@ def train(config: Config):
         small_positional_encoding,
     ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
     camera_count = len(dataset_metadata["fn"][0])
-    for i in tqdm(range(config.iteration_count), desc="Training"):
+    for i in tqdm(range(config.total_iteration_count), desc="Training"):
         timestep = i % timestep_count
         camera_index = torch.randint(0, camera_count, ())
 
@@ -653,7 +653,7 @@ def train(config: Config):
             initial_neighborhoods=initial_neighborhoods,
             previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
             rigidity_loss_weight=(
-                2.0 / (1.0 + math.exp(-6 * (i / config.iteration_count))) - 1
+                2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
             ),
         )
         wandb.log(
@@ -704,7 +704,7 @@ def train(config: Config):
                 image_losses.append(image_loss.item())
         wandb.log(
             {f"mean-image-loss": sum(image_losses) / len(image_losses)},
-            step=config.iteration_count + timestep,
+            step=config.total_iteration_count + timestep,
         )
     with torch.no_grad():
         run_output_directory_path = (
@@ -741,9 +741,11 @@ def main():
         type=Path,
         default=Path("./deformation_networks"),
     )
-    argument_parser.add_argument("-is", "--iteration_count", type=int, default=200_000)
     argument_parser.add_argument(
-        "-wr", "--warmup_iteration_ratio", type=float, default=0.075
+        "-ti", "--total_iteration_count", type=int, default=200_000
+    )
+    argument_parser.add_argument(
+        "-wi", "--warmup_iteration_count", type=float, default=15_000
     )
     argument_parser.add_argument("--fps", type=int, default=30)
     args = argument_parser.parse_args()
@@ -753,8 +755,8 @@ def main():
         learning_rate=args.learning_rate,
         timestep_count_limit=args.timestep_count_limit,
         output_directory_path=args.output_directory_path,
-        iteration_count=args.iteration_count,
-        warmup_iteration_ratio=args.warmup_iteration_ratio,
+        total_iteration_count=args.total_iteration_count,
+        warmup_iteration_count=args.warmup_iteration_count,
         fps=args.fps,
     )
     train(config=config)
