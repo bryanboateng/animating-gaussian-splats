@@ -42,7 +42,6 @@ class Config:
 
 @dataclass
 class Neighborhoods:
-    distances: torch.Tensor
     weights: torch.Tensor
     indices: torch.Tensor
 
@@ -161,12 +160,6 @@ def initialize_post_first_timestep(
         indices=(torch.tensor(neighbor_indices_list).cuda().long().contiguous()),
         weights=(
             torch.tensor(np.exp(-2000 * neighbor_squared_distances_list))
-            .cuda()
-            .float()
-            .contiguous()
-        ),
-        distances=(
-            torch.tensor(np.sqrt(neighbor_squared_distances_list))
             .cuda()
             .float()
             .contiguous()
