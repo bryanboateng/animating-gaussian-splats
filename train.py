@@ -678,7 +678,7 @@ def train(config: Config):
         scheduler.step()
         optimizer.zero_grad()
     for timestep in tqdm(
-        range(timestep_count), desc="Calculate Mean Image Loss per Timestep"
+        range(1, timestep_count), desc="Calculate Mean Image Loss per Timestep"
     ):
         image_losses = []
         with torch.no_grad():
