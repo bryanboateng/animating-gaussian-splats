@@ -78,7 +78,7 @@ def create_render_settings(
     image_height: int,
     intrinsic_matrix,
     extrinsic_matrix,
-    near_clipping_plane_distance: float = 0.01,
+    near_clipping_plane_distance: float = 1.0,
     far_clipping_plane_distance: float = 100,
 ):
     focal_length_x, focal_length_y, principal_point_x, principal_point_y = (
