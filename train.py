@@ -2,6 +2,7 @@ import argparse
 import copy
 import json
 import math
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -385,17 +386,18 @@ def calculate_loss(
 def export_deformation_network(
     run_output_directory_path: Path,
     sequence_name: str,
-    initial_gaussian_cloud_parameters: GaussianCloudParameters,
+    data_directory_path: Path,
     deformation_network: DeformationNetwork,
     timestep_count: int,
 ):
     network_directory_path = run_output_directory_path / "deformation_network"
     network_directory_path.mkdir(exist_ok=True)
-    parameters_save_path = (
-        network_directory_path
-        / f"{sequence_name}_densified_initial_gaussian_cloud_parameters.pth"
+    shutil.copy(
+        src=data_directory_path
+        / sequence_name
+        / "densified_initial_gaussian_cloud_parameters.pth",
+        dst=network_directory_path / "densified_initial_gaussian_cloud_parameters.pth",
     )
-    torch.save(initial_gaussian_cloud_parameters, parameters_save_path)
 
     (network_directory_path / "timestep_count").write_text(f"{timestep_count}")
 
@@ -699,7 +701,7 @@ def train(config: Config):
         export_deformation_network(
             run_output_directory_path=run_output_directory_path,
             sequence_name=config.sequence_name,
-            initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            data_directory_path=config.data_directory_path,
             deformation_network=deformation_network,
             timestep_count=timestep_count,
         )
