@@ -389,10 +389,7 @@ def export_deformation_network(
     deformation_network: DeformationNetwork,
     timestep_count: int,
 ):
-    network_directory_path = (
-        run_output_directory_path
-        / f"deformation_network_{sequence_name}_{wandb.run.name}"
-    )
+    network_directory_path = run_output_directory_path / "deformation_network"
     network_directory_path.mkdir(exist_ok=True)
     parameters_save_path = (
         network_directory_path
