@@ -259,7 +259,7 @@ def update_gaussian_cloud_parameters(
     timestep_count,
 ):
     encoded_timestep = small_positional_encoding(
-        torch.tensor((timestep + 1) / timestep_count)
+        torch.tensor(timestep / (timestep_count - 1))
         .view(1, 1)
         .repeat(encoded_normalized_initial_means.shape[0], 1)
         .cuda()
