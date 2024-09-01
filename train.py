@@ -402,10 +402,7 @@ def export_deformation_network(
 
     (network_directory_path / "timestep_count").write_text(f"{timestep_count}")
 
-    network_state_dict_path = (
-        network_directory_path
-        / f"deformation_network_state_dict_{sequence_name}_{wandb.run.name}.pth"
-    )
+    network_state_dict_path = network_directory_path / f"state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
     wandb.save(
         network_directory_path / "*",
