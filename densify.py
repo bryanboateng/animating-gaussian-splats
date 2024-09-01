@@ -147,16 +147,6 @@ def get_random_element(input_list, fallback_list):
     return input_list.pop(randint(0, len(input_list) - 1))
 
 
-def save_and_log_checkpoint(
-    sequence_path: Path,
-    initial_gaussian_cloud_parameters: GaussianCloudParameters,
-):
-    parameters_save_path = (
-        sequence_path / "densified_initial_gaussian_cloud_parameters.pth"
-    )
-    torch.save(initial_gaussian_cloud_parameters, parameters_save_path)
-
-
 def calculate_image_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
@@ -233,6 +223,16 @@ def calculate_image_and_segmentation_loss(
     )
 
 
+def export_parameters(
+    sequence_path: Path,
+    parameters: GaussianCloudParameters,
+):
+    parameters_save_path = (
+        sequence_path / "densified_initial_gaussian_cloud_parameters.pth"
+    )
+    torch.save(parameters, parameters_save_path)
+
+
 def densify(sequence_path: Path):
     wandb.init(project="densify-gaussian-cloud")
     dataset_metadata_file_path = sequence_path / "train_meta.json"
@@ -280,9 +280,7 @@ def densify(sequence_path: Path):
             )
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-    save_and_log_checkpoint(
-        sequence_path=sequence_path, initial_gaussian_cloud_parameters=parameters
-    )
+    export_parameters(sequence_path=sequence_path, parameters=parameters)
 
 
 def main():
