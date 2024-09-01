@@ -658,11 +658,11 @@ def train(config: Config):
         )
         wandb.log(
             {
-                f"loss-total": total_loss.item(),
-                f"loss-l1": l1_loss.item(),
-                f"loss-ssim": ssim_loss.item(),
-                f"loss-image": image_loss.item(),
-                f"loss-rigidity": rigidity_loss.item(),
+                f"train-loss/total": total_loss.item(),
+                f"train-loss/l1": l1_loss.item(),
+                f"train-loss/ssim": ssim_loss.item(),
+                f"train-loss/image": image_loss.item(),
+                f"train-loss/rigidity": rigidity_loss.item(),
                 f"learning_rate": optimizer.param_groups[0]["lr"],
             }
         )
