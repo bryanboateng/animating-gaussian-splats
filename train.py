@@ -317,21 +317,22 @@ def calculate_rigidity_loss(
     render_arguments = create_render_arguments(gaussian_cloud_parameters)
     foreground_means = render_arguments["means3D"][foreground_mask]
     foreground_rotations = render_arguments["rotations"][foreground_mask]
-    relative_rotation_quaternion = quat_mult(
-        foreground_rotations,
-        previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
+    foreground_rotations_from_previous_timestep_to_current = build_rotation(
+        quat_mult(
+            foreground_rotations,
+            previous_timestep_gaussian_cloud_state.inverted_foreground_rotations,
+        )
     )
-    rotation_matrix = build_rotation(relative_rotation_quaternion)
     foreground_neighbor_means = foreground_means[initial_neighborhoods.indices]
     foreground_offset_to_neighbors = (
         foreground_neighbor_means - foreground_means[:, None]
     )
-    curr_offset_in_prev_coord = (
-        rotation_matrix.transpose(2, 1)[:, None]
+    foreground_offset_to_neighbors_in_previous_timestep_coordinates = (
+        foreground_rotations_from_previous_timestep_to_current.transpose(2, 1)[:, None]
         @ foreground_offset_to_neighbors[:, :, :, None]
     ).squeeze(-1)
     return weighted_l2_loss_v2(
-        curr_offset_in_prev_coord,
+        foreground_offset_to_neighbors_in_previous_timestep_coordinates,
         previous_timestep_gaussian_cloud_state.offsets_to_neighbors,
         initial_neighborhoods.weights,
     )
@@ -643,7 +644,7 @@ def train(config: Config):
                 f"train-loss/ssim": ssim_loss.item(),
                 f"train-loss/image": image_loss.item(),
                 f"train-loss/rigidity": rigidity_loss.item(),
-                f"learning_rate": optimizer.param_groups[0]["lr"],
+                f"learning-rate": optimizer.param_groups[0]["lr"],
             }
         )
         update_previous_timestep_gaussian_cloud_state(
