@@ -310,10 +310,12 @@ def weighted_l2_loss_v2(x, y, w):
 
 def calculate_rigidity_loss(
     gaussian_cloud_parameters,
-    foreground_mask,
     initial_neighborhoods,
     previous_timestep_gaussian_cloud_state,
 ):
+    foreground_mask = (
+        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
+    ).detach()
     render_arguments = create_render_arguments(gaussian_cloud_parameters)
     foreground_means = render_arguments["means3D"][foreground_mask]
     foreground_rotations = render_arguments["rotations"][foreground_mask]
@@ -361,13 +363,8 @@ def calculate_loss(
     previous_timestep_gaussian_cloud_state: GaussianCloudReferenceState,
     rigidity_loss_weight,
 ):
-
-    foreground_mask = (
-        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
-    ).detach()
     rigidity_loss = calculate_rigidity_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
-        foreground_mask=foreground_mask,
         initial_neighborhoods=initial_neighborhoods,
         previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
     )
