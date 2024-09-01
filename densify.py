@@ -253,7 +253,7 @@ def calculate_image_and_segmentation_loss(
 
 
 def densify(sequence_path: Path):
-    wandb.init(project="animating-gaussian-splats")
+    wandb.init(project="densify-gaussian-cloud")
     dataset_metadata_file_path = sequence_path / "train_meta.json"
     with dataset_metadata_file_path.open() as file:
         dataset_metadata = json.load(file)
