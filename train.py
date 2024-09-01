@@ -145,10 +145,7 @@ def load_densified_initial_parameters(data_directory_path: Path, sequence_name: 
     return parameters
 
 
-def initialize_post_first_timestep(
-    gaussian_cloud_parameters: GaussianCloudParameters,
-):
-
+def initialize_variables(gaussian_cloud_parameters: GaussianCloudParameters):
     foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
     foreground_means = gaussian_cloud_parameters.means[foreground_mask]
     neighbor_indices_list, neighbor_squared_distances_list = (
@@ -564,10 +561,7 @@ def train(config: Config):
         sequence_name=config.sequence_name,
     )
 
-    (
-        initial_neighbor_info,
-        previous_timestep_foreground_info,
-    ) = initialize_post_first_timestep(
+    initial_neighbor_info, previous_timestep_foreground_info = initialize_variables(
         gaussian_cloud_parameters=initial_gaussian_cloud_parameters
     )
     (
