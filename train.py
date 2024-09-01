@@ -438,7 +438,6 @@ def export_visualization(
     aspect_ratio: float,
     extrinsic_matrix: np.array,
     visualizations_directory_path: Path,
-    sequence_name: str,
     fps: int,
 ):
     render_images = []
@@ -490,11 +489,8 @@ def export_visualization(
             .astype(np.uint8)
             .transpose(1, 2, 0)
         )
-    rendered_sequence_path = (
-        visualizations_directory_path / f"{sequence_name}_{name}_{wandb.run.name}.mp4"
-    )
     imageio.mimwrite(
-        rendered_sequence_path,
+        visualizations_directory_path / f"{name}.mp4",
         render_images,
         fps=fps,
     )
@@ -502,15 +498,12 @@ def export_visualization(
 
 def export_visualizations(
     run_output_directory_path: Path,
-    sequence_name: str,
     initial_gaussian_cloud_parameters: GaussianCloudParameters,
     deformation_network: DeformationNetwork,
     timestep_count: int,
     fps: int,
 ):
-    visualizations_directory_path = (
-        run_output_directory_path / f"visualizations_{sequence_name}_{wandb.run.name}"
-    )
+    visualizations_directory_path = run_output_directory_path / "visualizations"
     visualizations_directory_path.mkdir(exist_ok=True)
 
     deformation_network.eval()
@@ -572,7 +565,6 @@ def export_visualizations(
             aspect_ratio=aspect_ratio,
             extrinsic_matrix=extrinsic_matrix,
             visualizations_directory_path=visualizations_directory_path,
-            sequence_name=sequence_name,
             fps=fps,
         )
     wandb.save(
