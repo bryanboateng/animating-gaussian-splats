@@ -391,7 +391,7 @@ def export_deformation_network(
     timestep_count: int,
 ):
     network_directory_path = run_output_directory_path / "deformation_network"
-    network_directory_path.mkdir(exist_ok=True)
+    network_directory_path.mkdir(parents=True, exist_ok=True)
     shutil.copy(
         src=data_directory_path
         / sequence_name
@@ -500,7 +500,7 @@ def export_visualizations(
     fps: int,
 ):
     visualizations_directory_path = run_output_directory_path / "visualizations"
-    visualizations_directory_path.mkdir(exist_ok=True)
+    visualizations_directory_path.mkdir(parents=True, exist_ok=True)
 
     deformation_network.eval()
 
