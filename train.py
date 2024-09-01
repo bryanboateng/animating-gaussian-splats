@@ -742,7 +742,7 @@ def main():
         "-ti", "--total_iteration_count", type=int, default=200_000
     )
     argument_parser.add_argument(
-        "-wi", "--warmup_iteration_count", type=float, default=15_000
+        "-wi", "--warmup_iteration_count", type=int, default=15_000
     )
     argument_parser.add_argument("--fps", type=int, default=30)
     args = argument_parser.parse_args()
