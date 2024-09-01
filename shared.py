@@ -136,12 +136,7 @@ def create_render_settings(
     )
 
 
-def load_view(
-    dataset_metadata,
-    timestep,
-    camera_index,
-    sequence_path: Path,
-):
+def load_view(dataset_metadata, timestep, camera_index, sequence_path: Path):
     filename = dataset_metadata["fn"][timestep][camera_index]
     segmentation_mask = (
         torch.tensor(
@@ -180,9 +175,9 @@ def load_view(
 
 
 def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
-    timestep_data = []
+    views = []
     for camera_index in range(len(dataset_metadata["fn"][timestep])):
-        timestep_data.append(
+        views.append(
             load_view(
                 dataset_metadata=dataset_metadata,
                 timestep=timestep,
@@ -190,4 +185,4 @@ def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
                 sequence_path=sequence_path,
             )
         )
-    return timestep_data
+    return views
