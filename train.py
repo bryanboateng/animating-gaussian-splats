@@ -621,10 +621,10 @@ def train(config: Config):
     ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
     camera_count = len(dataset_metadata["fn"][0])
     for i in tqdm(range(config.total_iteration_count), desc="Training"):
-        timestep = i % timestep_count
+        timestep = (i % (timestep_count - 1)) + 1
         camera_index = torch.randint(0, camera_count, ())
 
-        if timestep == 0:
+        if timestep == 1:
             update_previous_timestep_gaussian_cloud_state(
                 gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 previous_timestep_gaussian_cloud_state=previous_timestep_gaussian_cloud_state,
