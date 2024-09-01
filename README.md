@@ -18,7 +18,15 @@ To run the scripts locally, ensure you have the following prerequisites:
 ### Setup
 
 1. Clone this repository
+
+   ```bash
+   git clone <repository_url>
+   ```
 1. Navigate to the repository directory
+
+   ```bash
+   cd <repository_directory>
+   ```
 1. Initialize and update the submodules:
 
    ```bash
