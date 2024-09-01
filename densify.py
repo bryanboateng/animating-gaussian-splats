@@ -157,8 +157,7 @@ def save_and_log_checkpoint(
     torch.save(initial_gaussian_cloud_parameters, parameters_save_path)
 
 
-def add_image_loss_grad(
-    losses: dict[str, torch.Tensor],
+def calculate_image_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
 ):
@@ -171,17 +170,16 @@ def add_image_loss_grad(
     ) = Renderer(
         raster_settings=target_view.render_settings
     )(**render_arguments)
-    losses["im"] = 0.8 * torch.nn.functional.l1_loss(
+    loss = 0.8 * torch.nn.functional.l1_loss(
         rendered_image, target_view.image
     ) + 0.2 * (1.0 - calc_ssim(rendered_image, target_view.image))
     means_2d = render_arguments[
         "means2D"
     ]  # Gradient only accum from colour render for densification
-    return means_2d, radii
+    return loss, means_2d, radii
 
 
-def add_segmentation_loss(
-    losses: dict[str, torch.Tensor],
+def calculate_segmentation_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
 ):
@@ -194,7 +192,7 @@ def add_segmentation_loss(
     ) = Renderer(
         raster_settings=target_view.render_settings
     )(**render_arguments)
-    losses["seg"] = 0.8 * torch.nn.functional.l1_loss(
+    return 0.8 * torch.nn.functional.l1_loss(
         segmentation_mask, target_view.segmentation_mask
     ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_view.segmentation_mask))
 
@@ -210,38 +208,16 @@ def update_max_2d_radii_and_visibility_mask(
     densification_variables.gaussian_is_visible_mask = radius_is_positive
 
 
-def combine_losses(losses: dict[str, torch.Tensor]):
-    loss_weights = {
-        "im": 1.0,
-        "seg": 3.0,
-        "rigid": 4.0,
-        "rot": 4.0,
-        "iso": 2.0,
-        "floor": 2.0,
-        "bg": 20.0,
-        "soft_col_cons": 0.01,
-    }
-    weighted_losses = []
-    for name, value in losses.items():
-        weighted_loss = torch.tensor(loss_weights[name]) * value
-        wandb.log({f"{name}-loss": weighted_loss})
-        weighted_losses.append(weighted_loss)
-    return torch.sum(torch.stack(weighted_losses))
-
-
 def calculate_image_and_segmentation_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
     densification_variables: DensificationVariables,
 ):
-    losses = {}
-    means_2d, radii = add_image_loss_grad(
-        losses=losses,
+    image_loss, means_2d, radii = calculate_image_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
         target_view=target_view,
     )
-    add_segmentation_loss(
-        losses=losses,
+    segmentation_loss = calculate_segmentation_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
         target_view=target_view,
     )
@@ -249,7 +225,12 @@ def calculate_image_and_segmentation_loss(
     update_max_2d_radii_and_visibility_mask(
         radii=radii, densification_variables=densification_variables
     )
-    return combine_losses(losses), densification_variables
+    return (
+        image_loss + 3 * segmentation_loss,
+        image_loss,
+        segmentation_loss,
+        densification_variables,
+    )
 
 
 def densify(sequence_path: Path):
@@ -273,18 +254,22 @@ def densify(sequence_path: Path):
         view = get_random_element(
             input_list=timestep_view_buffer, fallback_list=timestep_views
         )
-        loss, densification_variables = calculate_image_and_segmentation_loss(
-            gaussian_cloud_parameters=parameters,
-            target_view=view,
-            densification_variables=densification_variables,
+        total_loss, image_loss, segmentation_loss, densification_variables = (
+            calculate_image_and_segmentation_loss(
+                gaussian_cloud_parameters=parameters,
+                target_view=view,
+                densification_variables=densification_variables,
+            )
         )
         wandb.log(
             {
-                f"timestep-{timestep}-loss": loss.item(),
+                "loss/image": image_loss,
+                "loss/segmentation": segmentation_loss,
+                "loss/total": total_loss.item(),
                 "gaussian_count": parameters.means.shape[0],
             }
         )
-        loss.backward()
+        total_loss.backward()
         with torch.no_grad():
             densify_gaussians(
                 gaussian_cloud_parameters=parameters,
