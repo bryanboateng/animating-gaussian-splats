@@ -38,7 +38,7 @@ class Config:
     timestep_count_limit: Optional[int]
     output_directory_path: Path
     total_iteration_count: int
-    warmup_iteration_count: float
+    warmup_iteration_count: int
     fps: int
 
 
