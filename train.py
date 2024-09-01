@@ -733,17 +733,17 @@ def main():
     argument_parser.add_argument(
         "data_directory_path", metavar="data-directory-path", type=Path
     )
-    argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument("-t", "--timestep-count-limit", type=int)
+    argument_parser.add_argument(
+        "-ti", "--total-iteration-count", type=int, default=200_000
+    )
+    argument_parser.add_argument(
+        "-wi", "--warmup-iteration-count", type=float, default=15_000
+    )
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
-    argument_parser.add_argument(
-        "-ti", "--total_iteration_count", type=int, default=200_000
-    )
-    argument_parser.add_argument(
-        "-wi", "--warmup_iteration_count", type=int, default=15_000
-    )
+    argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument("-fps", type=int, default=30)
     args = argument_parser.parse_args()
     config = Config(
