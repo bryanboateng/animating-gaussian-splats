@@ -191,7 +191,3 @@ def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
             )
         )
     return timestep_data
-
-
-def l1_loss_v1(x, y):
-    return torch.abs((x - y)).mean()

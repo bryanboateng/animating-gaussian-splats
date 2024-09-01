@@ -16,7 +16,6 @@ from shared import (
     GaussianCloudParameters,
     DensificationVariables,
     View,
-    l1_loss_v1,
     create_render_arguments,
 )
 
@@ -172,9 +171,9 @@ def add_image_loss_grad(
     ) = Renderer(
         raster_settings=target_view.render_settings
     )(**render_arguments)
-    losses["im"] = 0.8 * l1_loss_v1(rendered_image, target_view.image) + 0.2 * (
-        1.0 - calc_ssim(rendered_image, target_view.image)
-    )
+    losses["im"] = 0.8 * torch.nn.functional.l1_loss(
+        rendered_image, target_view.image
+    ) + 0.2 * (1.0 - calc_ssim(rendered_image, target_view.image))
     means_2d = render_arguments[
         "means2D"
     ]  # Gradient only accum from colour render for densification
@@ -195,7 +194,7 @@ def add_segmentation_loss(
     ) = Renderer(
         raster_settings=target_view.render_settings
     )(**render_arguments)
-    losses["seg"] = 0.8 * l1_loss_v1(
+    losses["seg"] = 0.8 * torch.nn.functional.l1_loss(
         segmentation_mask, target_view.segmentation_mask
     ) + 0.2 * (1.0 - calc_ssim(segmentation_mask, target_view.segmentation_mask))
 

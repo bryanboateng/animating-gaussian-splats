@@ -23,7 +23,6 @@ from shared import (
     load_view,
     GaussianCloudParameters,
     View,
-    l1_loss_v1,
     create_render_arguments,
     create_render_settings,
 )
@@ -346,7 +345,7 @@ def calculate_image_loss(gaussian_cloud_parameters, target_view: View):
     ) = Renderer(
         raster_settings=target_view.render_settings
     )(**create_render_arguments(gaussian_cloud_parameters))
-    l1_loss = l1_loss_v1(rendered_image, target_view.image)
+    l1_loss = torch.nn.functional.l1_loss(rendered_image, target_view.image)
     ssim_loss = 1.0 - calc_ssim(rendered_image, target_view.image)
     image_loss = 0.8 * l1_loss + 0.2 * ssim_loss
     return l1_loss, ssim_loss, image_loss
