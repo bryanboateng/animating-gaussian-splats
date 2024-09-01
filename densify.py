@@ -231,6 +231,7 @@ def export_parameters(
         sequence_path / "densified_initial_gaussian_cloud_parameters.pth"
     )
     torch.save(parameters, parameters_save_path)
+    wandb.save(parameters_save_path)
 
 
 def densify(sequence_path: Path):
