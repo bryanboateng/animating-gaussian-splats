@@ -599,7 +599,7 @@ def train(config: Config):
     )
     scheduler = get_linear_warmup_cos_annealing(
         optimizer,
-        warmup_iters=int(config.total_iteration_count * config.warmup_iteration_count),
+        warmup_iters=config.warmup_iteration_count,
         total_iters=config.total_iteration_count,
     )
 
