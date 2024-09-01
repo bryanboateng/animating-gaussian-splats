@@ -21,7 +21,6 @@ from shared import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
     load_view,
-    GaussianCloudParameters,
     View,
     create_render_arguments,
     create_render_settings,
@@ -134,19 +133,19 @@ def get_linear_warmup_cos_annealing(optimizer, warmup_iters, total_iters):
 
 
 def load_densified_initial_parameters(data_directory_path: Path, sequence_name: str):
-    parameters: GaussianCloudParameters = torch.load(
+    parameters: dict[str, torch.nn.Parameter] = torch.load(
         data_directory_path
         / sequence_name
         / "densified_initial_gaussian_cloud_parameters.pth"
     )
-    for parameter in parameters.__dict__.values():
+    for parameter in parameters.values():
         parameter.requires_grad = False
     return parameters
 
 
-def initialize_variables(gaussian_cloud_parameters: GaussianCloudParameters):
-    foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
-    foreground_means = gaussian_cloud_parameters.means[foreground_mask]
+def initialize_variables(gaussian_cloud_parameters: dict[str, torch.nn.Parameter]):
+    foreground_mask = gaussian_cloud_parameters["segmentation_masks"][:, 0] > 0.5
+    foreground_means = gaussian_cloud_parameters["means"][foreground_mask]
     neighbor_indices_list, neighbor_squared_distances_list = (
         compute_knn_indices_and_squared_distances(
             foreground_means.detach().cpu().numpy(), 20
@@ -167,9 +166,11 @@ def initialize_variables(gaussian_cloud_parameters: GaussianCloudParameters):
     return neighbor_info, previous_timestep_foreground_info
 
 
-def encode_means_and_rotations(gaussian_cloud_parameters: GaussianCloudParameters):
-    means = gaussian_cloud_parameters.means
-    rotations = gaussian_cloud_parameters.rotation_quaternions
+def encode_means_and_rotations(
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
+):
+    means = gaussian_cloud_parameters["means"]
+    rotations = gaussian_cloud_parameters["rotation_quaternions"]
     normalized_means = means - means.min(dim=0).values
     normalized_means = (
         2.0 * normalized_means / normalized_means.max(dim=0).values
@@ -198,16 +199,16 @@ def get_inverted_foreground_rotations(
 
 
 def update_previous_timestep_foreground_info(
-    gaussian_cloud_parameters: GaussianCloudParameters,
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     previous_timestep_foreground_info: ForegroundInfo,
     initial_neighbor_indices: torch.Tensor,
 ):
-    current_means = gaussian_cloud_parameters.means
+    current_means = gaussian_cloud_parameters["means"]
     current_rotations = torch.nn.functional.normalize(
-        gaussian_cloud_parameters.rotation_quaternions
+        gaussian_cloud_parameters["rotation_quaternions"]
     )
 
-    foreground_mask = gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
+    foreground_mask = gaussian_cloud_parameters["segmentation_masks"][:, 0] > 0.5
     inverted_foreground_rotations = get_inverted_foreground_rotations(
         current_rotations, foreground_mask
     )
@@ -225,7 +226,7 @@ def update_previous_timestep_foreground_info(
 
 def update_gaussian_cloud_parameters(
     deformation_network: DeformationNetwork,
-    initial_gaussian_cloud_parameters: GaussianCloudParameters,
+    initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     encoded_normalized_initial_means,
     encoded_normalized_initial_rotations,
     small_positional_encoding: PositionalEncoding,
@@ -241,8 +242,8 @@ def update_gaussian_cloud_parameters(
     delta = deformation_network(
         torch.cat(
             (
-                initial_gaussian_cloud_parameters.means,
-                initial_gaussian_cloud_parameters.rotation_quaternions,
+                initial_gaussian_cloud_parameters["means"],
+                initial_gaussian_cloud_parameters["rotation_quaternions"],
             ),
             dim=1,
         ),
@@ -254,15 +255,17 @@ def update_gaussian_cloud_parameters(
     )
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
-    updated_gaussian_cloud_parameters = copy.deepcopy(initial_gaussian_cloud_parameters)
-    updated_gaussian_cloud_parameters.means = (
-        updated_gaussian_cloud_parameters.means.detach()
+    updated_gaussian_cloud_parameters: dict[str, torch.nn.Parameter] = copy.deepcopy(
+        initial_gaussian_cloud_parameters
     )
-    updated_gaussian_cloud_parameters.means += means_delta * 0.01
-    updated_gaussian_cloud_parameters.rotation_quaternions = (
-        updated_gaussian_cloud_parameters.rotation_quaternions.detach()
+    updated_gaussian_cloud_parameters["means"] = updated_gaussian_cloud_parameters[
+        "means"
+    ].detach()
+    updated_gaussian_cloud_parameters["means"] += means_delta * 0.01
+    updated_gaussian_cloud_parameters["rotation_quaternions"] = (
+        updated_gaussian_cloud_parameters["rotation_quaternions"].detach()
     )
-    updated_gaussian_cloud_parameters.rotation_quaternions += rotations_delta * 0.01
+    updated_gaussian_cloud_parameters["rotation_quaternions"] += rotations_delta * 0.01
     return updated_gaussian_cloud_parameters
 
 
@@ -284,7 +287,7 @@ def calculate_rigidity_loss(
     gaussian_cloud_parameters, initial_neighbor_info, previous_timestep_foreground_info
 ):
     foreground_mask = (
-        gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
+        gaussian_cloud_parameters["segmentation_masks"][:, 0] > 0.5
     ).detach()
     render_arguments = create_render_arguments(gaussian_cloud_parameters)
     foreground_means = render_arguments["means3D"][foreground_mask]
@@ -324,7 +327,7 @@ def calculate_image_loss(gaussian_cloud_parameters, target_view: View):
 
 
 def calculate_loss(
-    gaussian_cloud_parameters: GaussianCloudParameters,
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     target_view: View,
     initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
@@ -458,7 +461,7 @@ def export_visualization(
 
 def export_visualizations(
     run_output_directory_path: Path,
-    initial_gaussian_cloud_parameters: GaussianCloudParameters,
+    initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     deformation_network: DeformationNetwork,
     timestep_count: int,
     fps: int,

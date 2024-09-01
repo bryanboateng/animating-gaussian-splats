@@ -10,18 +10,6 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings
 
 
 @dataclass
-class GaussianCloudParameters:
-    means: torch.nn.Parameter
-    rgb_colors: torch.nn.Parameter
-    segmentation_colors: torch.nn.Parameter
-    rotation_quaternions: torch.nn.Parameter
-    opacities_logits: torch.nn.Parameter
-    log_scales: torch.nn.Parameter
-    camera_matrices: torch.nn.Parameter
-    camera_centers: torch.nn.Parameter
-
-
-@dataclass
 class View:
     camera_index: int
     render_settings: GaussianRasterizationSettings
@@ -38,17 +26,17 @@ class DensificationVariables:
     means_2d: torch.Tensor = None
 
 
-def create_render_arguments(gaussian_cloud_parameters: GaussianCloudParameters):
+def create_render_arguments(gaussian_cloud_parameters: dict[str, torch.nn.Parameter]):
     return {
-        "means3D": gaussian_cloud_parameters.means,
-        "colors_precomp": gaussian_cloud_parameters.rgb_colors,
+        "means3D": gaussian_cloud_parameters["means"],
+        "colors_precomp": gaussian_cloud_parameters["colors"],
         "rotations": torch.nn.functional.normalize(
-            gaussian_cloud_parameters.rotation_quaternions
+            gaussian_cloud_parameters["rotation_quaternions"]
         ),
-        "opacities": torch.sigmoid(gaussian_cloud_parameters.opacities_logits),
-        "scales": torch.exp(gaussian_cloud_parameters.log_scales),
+        "opacities": torch.sigmoid(gaussian_cloud_parameters["opacity_logits"]),
+        "scales": torch.exp(gaussian_cloud_parameters["log_scales"]),
         "means2D": torch.zeros_like(
-            gaussian_cloud_parameters.means, requires_grad=True, device="cuda"
+            gaussian_cloud_parameters["means"], requires_grad=True, device="cuda"
         )
         + 0,
     }

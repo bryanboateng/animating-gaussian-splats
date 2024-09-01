@@ -13,17 +13,10 @@ from external import densify_gaussians, calc_ssim
 from shared import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
-    GaussianCloudParameters,
     DensificationVariables,
     View,
     create_render_arguments,
 )
-
-
-def create_trainable_parameter(v):
-    return torch.nn.Parameter(
-        torch.tensor(v).cuda().float().contiguous().requires_grad_(True)
-    )
 
 
 def initialize_parameters(sequence_path: Path):
@@ -33,36 +26,35 @@ def initialize_parameters(sequence_path: Path):
     _, squared_distances = compute_knn_indices_and_squared_distances(
         numpy_point_cloud=initial_point_cloud[:, :3], k=3
     )
-    return GaussianCloudParameters(
-        means=create_trainable_parameter(initial_point_cloud[:, :3]),
-        rgb_colors=create_trainable_parameter(initial_point_cloud[:, 3:6]),
-        segmentation_colors=create_trainable_parameter(
-            np.stack(
+    return {
+        k: torch.nn.Parameter(
+            torch.tensor(v).cuda().float().contiguous().requires_grad_(True)
+        )
+        for k, v in {
+            "means": initial_point_cloud[:, :3],
+            "colors": initial_point_cloud[:, 3:6],
+            "segmentation_masks": np.stack(
                 (
                     segmentation_masks,
                     np.zeros_like(segmentation_masks),
                     1 - segmentation_masks,
                 ),
                 -1,
-            )
-        ),
-        rotation_quaternions=create_trainable_parameter(
-            np.tile([1, 0, 0, 0], (segmentation_masks.shape[0], 1))
-        ),
-        opacities_logits=create_trainable_parameter(
-            np.zeros((segmentation_masks.shape[0], 1))
-        ),
-        log_scales=create_trainable_parameter(
-            np.tile(
+            ),
+            "rotation_quaternions": np.tile(
+                [1, 0, 0, 0], (segmentation_masks.shape[0], 1)
+            ),
+            "opacity_logits": np.zeros((segmentation_masks.shape[0], 1)),
+            "log_scales": np.tile(
                 np.log(np.sqrt(squared_distances.mean(-1).clip(min=0.0000001)))[
                     ..., None
                 ],
                 (1, 3),
-            )
-        ),
-        camera_matrices=create_trainable_parameter(np.zeros((camera_count_limit, 3))),
-        camera_centers=create_trainable_parameter(np.zeros((camera_count_limit, 3))),
-    )
+            ),
+            "camera_matrices": np.zeros((camera_count_limit, 3)),
+            "camera_center": np.zeros((camera_count_limit, 3)),
+        }.items()
+    }
 
 
 def get_scene_radius(dataset_metadata):
@@ -73,49 +65,21 @@ def get_scene_radius(dataset_metadata):
     return scene_radius
 
 
-def create_optimizer(parameters: GaussianCloudParameters, scene_radius: float):
+def create_optimizer(parameters: dict[str, torch.nn.Parameter], scene_radius: float):
+    learning_rates = {
+        "means": 0.00016 * scene_radius,
+        "colors": 0.0025,
+        "segmentation_masks": 0.0,
+        "rotation_quaternions": 0.001,
+        "opacity_logits": 0.05,
+        "log_scales": 0.001,
+        "camera_matrices": 1e-4,
+        "camera_center": 1e-4,
+    }
     return torch.optim.Adam(
         [
-            {
-                "params": [parameters.means],
-                "name": "means",
-                "lr": 0.00016 * scene_radius,
-            },
-            {
-                "params": [parameters.rgb_colors],
-                "name": "rgb_colors",
-                "lr": 0.0025,
-            },
-            {
-                "params": [parameters.segmentation_colors],
-                "name": "segmentation_colors",
-                "lr": 0.0,
-            },
-            {
-                "params": [parameters.rotation_quaternions],
-                "name": "rotation_quaternions",
-                "lr": 0.001,
-            },
-            {
-                "params": [parameters.opacities_logits],
-                "name": "opacities_logits",
-                "lr": 0.05,
-            },
-            {
-                "params": [parameters.log_scales],
-                "name": "log_scales",
-                "lr": 0.001,
-            },
-            {
-                "params": [parameters.camera_matrices],
-                "name": "camera_matrices",
-                "lr": 1e-4,
-            },
-            {
-                "params": [parameters.camera_centers],
-                "name": "camera_centers",
-                "lr": 1e-4,
-            },
+            {"params": [value], "name": name, "lr": learning_rates[name]}
+            for name, value in parameters.items()
         ],
         lr=0.0,
         eps=1e-15,
@@ -123,18 +87,18 @@ def create_optimizer(parameters: GaussianCloudParameters, scene_radius: float):
 
 
 def create_densification_variables(
-    gaussian_cloud_parameters: GaussianCloudParameters,
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
 ):
     densification_variables = DensificationVariables(
-        visibility_count=torch.zeros(gaussian_cloud_parameters.means.shape[0])
+        visibility_count=torch.zeros(gaussian_cloud_parameters["means"].shape[0])
         .cuda()
         .float(),
         mean_2d_gradients_accumulated=torch.zeros(
-            gaussian_cloud_parameters.means.shape[0]
+            gaussian_cloud_parameters["means"].shape[0]
         )
         .cuda()
         .float(),
-        max_2d_radii=torch.zeros(gaussian_cloud_parameters.means.shape[0])
+        max_2d_radii=torch.zeros(gaussian_cloud_parameters["means"].shape[0])
         .cuda()
         .float(),
     )
@@ -148,7 +112,7 @@ def get_random_element(input_list, fallback_list):
 
 
 def calculate_image_loss(
-    gaussian_cloud_parameters: GaussianCloudParameters,
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     target_view: View,
 ):
     render_arguments = create_render_arguments(gaussian_cloud_parameters)
@@ -170,11 +134,11 @@ def calculate_image_loss(
 
 
 def calculate_segmentation_loss(
-    gaussian_cloud_parameters: GaussianCloudParameters,
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     target_view: View,
 ):
     render_arguments = create_render_arguments(gaussian_cloud_parameters)
-    render_arguments["colors_precomp"] = gaussian_cloud_parameters.segmentation_colors
+    render_arguments["colors_precomp"] = gaussian_cloud_parameters["segmentation_masks"]
     (
         segmentation_mask,
         _,
@@ -199,7 +163,7 @@ def update_max_2d_radii_and_visibility_mask(
 
 
 def calculate_image_and_segmentation_loss(
-    gaussian_cloud_parameters: GaussianCloudParameters,
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     target_view: View,
     densification_variables: DensificationVariables,
 ):
@@ -225,7 +189,7 @@ def calculate_image_and_segmentation_loss(
 
 def export_parameters(
     sequence_path: Path,
-    parameters: GaussianCloudParameters,
+    parameters: dict[str, torch.nn.Parameter],
 ):
     parameters_save_path = (
         sequence_path / "densified_initial_gaussian_cloud_parameters.pth"
@@ -267,7 +231,7 @@ def densify(sequence_path: Path):
                 "loss/image": image_loss,
                 "loss/segmentation": segmentation_loss,
                 "loss/total": total_loss.item(),
-                "gaussian_count": parameters.means.shape[0],
+                "gaussian_count": parameters["means"].shape[0],
             }
         )
         total_loss.backward()
