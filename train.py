@@ -730,7 +730,7 @@ def main():
         "-ti", "--total-iteration-count", type=int, default=200_000
     )
     argument_parser.add_argument(
-        "-wi", "--warmup-iteration-count", type=float, default=15_000
+        "-wi", "--warmup-iteration-count", type=int, default=15_000
     )
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
