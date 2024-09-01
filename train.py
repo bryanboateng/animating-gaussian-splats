@@ -469,8 +469,6 @@ def export_visualizations(
     visualizations_directory_path = run_output_directory_path / "visualizations"
     visualizations_directory_path.mkdir(parents=True, exist_ok=True)
 
-    deformation_network.eval()
-
     (
         encoded_normalized_initial_means,
         encoded_normalized_initial_rotations,
