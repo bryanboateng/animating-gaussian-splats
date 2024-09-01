@@ -736,10 +736,7 @@ def main():
     argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument("-t", "--timestep-count-limit", type=int)
     argument_parser.add_argument(
-        "-o",
-        "--output-directory-path",
-        type=Path,
-        default=Path("./deformation_networks"),
+        "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
     argument_parser.add_argument(
         "-ti", "--total_iteration_count", type=int, default=200_000
