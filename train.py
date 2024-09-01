@@ -49,11 +49,8 @@ class Neighborhoods:
 
 @dataclass
 class GaussianCloudReferenceState:
-    means: torch.Tensor
-    rotations: torch.Tensor
     inverted_foreground_rotations: Optional[torch.Tensor] = None
     offsets_to_neighbors: Optional[torch.Tensor] = None
-    colors: Optional[torch.Tensor] = None
 
 
 class ResidualBlock(nn.Module):
@@ -176,12 +173,7 @@ def initialize_post_first_timestep(
         ),
     )
 
-    previous_timestep_gaussian_cloud_state = GaussianCloudReferenceState(
-        means=gaussian_cloud_parameters.means.detach(),
-        rotations=torch.nn.functional.normalize(
-            gaussian_cloud_parameters.rotation_quaternions
-        ).detach(),
-    )
+    previous_timestep_gaussian_cloud_state = GaussianCloudReferenceState()
 
     return neighborhoods, previous_timestep_gaussian_cloud_state
 
@@ -239,13 +231,6 @@ def update_previous_timestep_gaussian_cloud_state(
     )
     previous_timestep_gaussian_cloud_state.offsets_to_neighbors = (
         offsets_to_neighbors.detach().clone()
-    )
-    previous_timestep_gaussian_cloud_state.colors = (
-        gaussian_cloud_parameters.rgb_colors.detach().clone()
-    )
-    previous_timestep_gaussian_cloud_state.means = current_means.detach().clone()
-    previous_timestep_gaussian_cloud_state.rotations = (
-        current_rotations.detach().clone()
     )
 
 
