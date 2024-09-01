@@ -201,10 +201,10 @@ def get_inverted_foreground_rotations(
     return foreground_rotations
 
 
-def update_previous_timestep_gaussian_cloud_state(
+def update_previous_timestep_foreground_info(
     gaussian_cloud_parameters: GaussianCloudParameters,
     previous_timestep_foreground_info: ForegroundInfo,
-    neighborhood_indices: torch.Tensor,
+    initial_neighbor_indices: torch.Tensor,
 ):
     current_means = gaussian_cloud_parameters.means
     current_rotations = torch.nn.functional.normalize(
@@ -216,14 +216,14 @@ def update_previous_timestep_gaussian_cloud_state(
         current_rotations, foreground_mask
     )
     foreground_means = current_means[foreground_mask]
-    offsets_to_neighbors = (
-        foreground_means[neighborhood_indices] - foreground_means[:, None]
+    offsets_to_foreground_neighbors = (
+        foreground_means[initial_neighbor_indices] - foreground_means[:, None]
     )
     previous_timestep_foreground_info.inverted_rotations = (
         inverted_foreground_rotations.detach().clone()
     )
     previous_timestep_foreground_info.offsets_to_neighbors = (
-        offsets_to_neighbors.detach().clone()
+        offsets_to_foreground_neighbors.detach().clone()
     )
 
 
@@ -285,9 +285,7 @@ def weighted_l2_loss_v2(x, y, w):
 
 
 def calculate_rigidity_loss(
-    gaussian_cloud_parameters,
-    initial_neighborhoods,
-    previous_timestep_foreground_info,
+    gaussian_cloud_parameters, initial_neighbor_info, previous_timestep_foreground_info
 ):
     foreground_mask = (
         gaussian_cloud_parameters.segmentation_colors[:, 0] > 0.5
@@ -297,11 +295,10 @@ def calculate_rigidity_loss(
     foreground_rotations = render_arguments["rotations"][foreground_mask]
     foreground_rotations_from_previous_timestep_to_current = build_rotation(
         quat_mult(
-            foreground_rotations,
-            previous_timestep_foreground_info.inverted_rotations,
+            foreground_rotations, previous_timestep_foreground_info.inverted_rotations
         )
     )
-    foreground_neighbor_means = foreground_means[initial_neighborhoods.indices]
+    foreground_neighbor_means = foreground_means[initial_neighbor_info.indices]
     foreground_offset_to_neighbors = (
         foreground_neighbor_means - foreground_means[:, None]
     )
@@ -312,7 +309,7 @@ def calculate_rigidity_loss(
     return weighted_l2_loss_v2(
         foreground_offset_to_neighbors_in_previous_timestep_coordinates,
         previous_timestep_foreground_info.offsets_to_neighbors,
-        initial_neighborhoods.weights,
+        initial_neighbor_info.weights,
     )
 
 
@@ -333,13 +330,13 @@ def calculate_image_loss(gaussian_cloud_parameters, target_view: View):
 def calculate_loss(
     gaussian_cloud_parameters: GaussianCloudParameters,
     target_view: View,
-    initial_neighborhoods: NeighborInfo,
+    initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
     rigidity_loss_weight,
 ):
     rigidity_loss = calculate_rigidity_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
-        initial_neighborhoods=initial_neighborhoods,
+        initial_neighbor_info=initial_neighbor_info,
         previous_timestep_foreground_info=previous_timestep_foreground_info,
     )
     l1_loss, ssim_loss, image_loss = calculate_image_loss(
@@ -568,7 +565,7 @@ def train(config: Config):
     )
 
     (
-        initial_neighborhoods,
+        initial_neighbor_info,
         previous_timestep_foreground_info,
     ) = initialize_post_first_timestep(
         gaussian_cloud_parameters=initial_gaussian_cloud_parameters
@@ -584,10 +581,10 @@ def train(config: Config):
         camera_index = torch.randint(0, camera_count, ())
 
         if timestep == 1:
-            update_previous_timestep_gaussian_cloud_state(
+            update_previous_timestep_foreground_info(
                 gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 previous_timestep_foreground_info=previous_timestep_foreground_info,
-                neighborhood_indices=initial_neighborhoods.indices,
+                initial_neighbor_indices=initial_neighbor_info.indices,
             )
 
         view = load_view(
@@ -609,7 +606,7 @@ def train(config: Config):
         total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_view=view,
-            initial_neighborhoods=initial_neighborhoods,
+            initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
             rigidity_loss_weight=(
                 2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
@@ -625,10 +622,10 @@ def train(config: Config):
                 f"learning-rate": optimizer.param_groups[0]["lr"],
             }
         )
-        update_previous_timestep_gaussian_cloud_state(
+        update_previous_timestep_foreground_info(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
-            neighborhood_indices=initial_neighborhoods.indices,
+            initial_neighbor_indices=initial_neighbor_info.indices,
         )
 
         total_loss.backward()
