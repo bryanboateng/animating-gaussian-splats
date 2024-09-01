@@ -193,31 +193,5 @@ def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
     return timestep_data
 
 
-def apply_exponential_transform_and_center_to_image(
-    image: torch.Tensor,
-    gaussian_cloud_parameters: GaussianCloudParameters,
-    camera_id: int,
-):
-    camera_matrices = gaussian_cloud_parameters.camera_matrices[camera_id]
-
-    # Apply exponential transformation to the camera matrix parameters.
-    # The exponential function ensures all values are positive and scales
-    # the parameters non-linearly, which may be required for the transformation.
-    exponential_camera_matrices = torch.exp(camera_matrices)[:, None, None]
-
-    # Element-wise multiply the transformed camera matrices with the image.
-    # This step applies the transformation to each pixel.
-    scaled_image = exponential_camera_matrices * image
-
-    camera_centers = gaussian_cloud_parameters.camera_centers[camera_id]
-
-    # Add the camera center parameters to the scaled image.
-    # This re-centers the transformed image based on the camera's center coordinates,
-    # completing the adjustment.
-    adjusted_image = scaled_image + camera_centers[:, None, None]
-
-    return adjusted_image
-
-
 def l1_loss_v1(x, y):
     return torch.abs((x - y)).mean()

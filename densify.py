@@ -17,7 +17,6 @@ from shared import (
     DensificationVariables,
     View,
     l1_loss_v1,
-    apply_exponential_transform_and_center_to_image,
     create_render_arguments,
 )
 
@@ -173,11 +172,8 @@ def add_image_loss_grad(
     ) = Renderer(
         raster_settings=target_view.render_settings
     )(**render_arguments)
-    image = apply_exponential_transform_and_center_to_image(
-        rendered_image, gaussian_cloud_parameters, target_view.camera_index
-    )
-    losses["im"] = 0.8 * l1_loss_v1(image, target_view.image) + 0.2 * (
-        1.0 - calc_ssim(image, target_view.image)
+    losses["im"] = 0.8 * l1_loss_v1(rendered_image, target_view.image) + 0.2 * (
+        1.0 - calc_ssim(rendered_image, target_view.image)
     )
     means_2d = render_arguments[
         "means2D"
