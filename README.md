@@ -1,21 +1,6 @@
 # Animating Gaussian Splats
 
-## Google Colab Notebooks
-
-For a quick and easy way to test and run the scripts,
-you can use the provided Google Colab notebook.
-This notebook allows you to execute the code without setting up a local environment.
-
-Google Colab Notebook: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bryanboateng/animating-gaussian-splats/blob/main/train.ipynb)
-
-## Prerequisites
-
-To run the scripts locally, ensure you have the following prerequisites:
-
-- Python 3.10 or higher
-- Dependencies listed in the `requirements.txt` file
-
-### Setup
+## Setup
 
 1. Clone this repository
 
@@ -27,16 +12,41 @@ To run the scripts locally, ensure you have the following prerequisites:
    ```bash
    cd <repository_directory>
    ```
-1. Initialize and update the submodules:
+1. Create a new conda environment using the provided `environment.yml` file:
 
    ```bash
-   git submodule update --init --recursive
+   conda env create --file environment.yml
    ```
-
-1. Install the dependencies:
+1. Activate the conda environment:
 
    ```bash
-   pip install -r requirements.txt
+   conda activate animating_gaussian_splats
+   ```
+1. Install rendering code
+	1. Initialize and update the submodules:
+
+		```bash
+		git submodule update --init --recursive
+		```
+   1. Navigate to the `diff-gaussian-rasterization-w-depth` directory:
+
+      ```bash
+      cd diff-gaussian-rasterization-w-depth
+      ```
+   1. Install the package by running the setup script:
+
+      ```bash
+      python setup.py install
+      ```
+   1. Install the package dependencies:
+
+      ```bash
+      pip install .
+      ```
+1. Return to the main repository directory:
+
+   ```bash
+   cd ..
    ```
 
 ## Usage
