@@ -618,7 +618,8 @@ def train(config: Config):
                 f"train-loss/image": image_loss.item(),
                 f"train-loss/rigidity": rigidity_loss.item(),
                 f"learning-rate": optimizer.param_groups[0]["lr"],
-            }
+            },
+            step=i,
         )
         update_previous_timestep_foreground_info(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
@@ -627,6 +628,22 @@ def train(config: Config):
         )
 
         total_loss.backward()
+
+        total_norm = torch.sqrt(
+            torch.sum(
+                torch.tensor(
+                    [
+                        parameter.grad.norm(2).pow(2)
+                        for parameter in deformation_network.parameters()
+                        if parameter.grad is not None
+                    ]
+                )
+            )
+        )
+        wandb.log(
+            {f"gradient-norm": total_norm},
+            step=i,
+        )
 
         optimizer.step()
         scheduler.step()
