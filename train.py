@@ -357,7 +357,9 @@ def export_deformation_network(
     deformation_network: DeformationNetwork,
     timestep_count: int,
 ):
-    network_directory_path = run_output_directory_path / "deformation_network"
+    network_directory_path = (
+        run_output_directory_path / f"{wandb.run.name}_deformation_network"
+    )
     network_directory_path.mkdir(parents=True, exist_ok=True)
     shutil.copy(
         src=data_directory_path
@@ -466,7 +468,9 @@ def export_visualizations(
     timestep_count: int,
     fps: int,
 ):
-    visualizations_directory_path = run_output_directory_path / "visualizations"
+    visualizations_directory_path = (
+        run_output_directory_path / f"{wandb.run.name}_visualizations"
+    )
     visualizations_directory_path.mkdir(parents=True, exist_ok=True)
 
     (
