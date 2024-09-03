@@ -31,6 +31,7 @@ from shared import (
 class Config:
     sequence_name: str
     data_directory_path: Path
+    residual_block_count: int
     learning_rate: float
     timestep_count_limit: Optional[int]
     output_directory_path: Path
@@ -75,12 +76,12 @@ class ResidualBlock(nn.Module):
 
 
 class DeformationNetwork(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, residual_block_count) -> None:
         super(DeformationNetwork, self).__init__()
         hidden_dimension = 128
         self.fc_in = nn.Linear(100, hidden_dimension)
         self.residual_blocks = nn.Sequential(
-            *(ResidualBlock(hidden_dimension) for _ in range(6))
+            *(ResidualBlock(hidden_dimension) for _ in range(residual_block_count))
         )
         self.fc_out = nn.Linear(hidden_dimension, 7)
 
@@ -356,6 +357,7 @@ def export_deformation_network(
     data_directory_path: Path,
     deformation_network: DeformationNetwork,
     timestep_count: int,
+    residual_block_count: int,
 ):
     network_directory_path = (
         run_output_directory_path / f"{wandb.run.name}_deformation_network"
@@ -369,6 +371,9 @@ def export_deformation_network(
     )
 
     (network_directory_path / "timestep_count").write_text(f"{timestep_count}")
+    (network_directory_path / "residual_block_count").write_text(
+        f"{residual_block_count}"
+    )
 
     network_state_dict_path = network_directory_path / f"state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
@@ -550,7 +555,9 @@ def train(config: Config):
         dataset_metadata=dataset_metadata,
         timestep_count_limit=config.timestep_count_limit,
     )
-    deformation_network = DeformationNetwork().cuda()
+    deformation_network = DeformationNetwork(
+        residual_block_count=config.residual_block_count
+    ).cuda()
     optimizer = torch.optim.Adam(
         params=deformation_network.parameters(), lr=config.learning_rate
     )
@@ -687,6 +694,7 @@ def train(config: Config):
             data_directory_path=config.data_directory_path,
             deformation_network=deformation_network,
             timestep_count=timestep_count,
+            residual_block_count=config.residual_block_count,
         )
         export_visualizations(
             run_output_directory_path=run_output_directory_path,
@@ -713,12 +721,14 @@ def main():
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
+    argument_parser.add_argument("-r", "--residual-block-count", type=int, default=6)
     argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument("-fps", type=int, default=30)
     args = argument_parser.parse_args()
     config = Config(
         sequence_name=args.sequence_name,
         data_directory_path=args.data_directory_path,
+        residual_block_count=args.residual_block_count,
         learning_rate=args.learning_rate,
         timestep_count_limit=args.timestep_count_limit,
         output_directory_path=args.output_directory_path,
