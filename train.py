@@ -31,6 +31,7 @@ from shared import (
 class Config:
     sequence_name: str
     data_directory_path: Path
+    hidden_dimension: int
     residual_block_count: int
     learning_rate: float
     timestep_count_limit: Optional[int]
@@ -76,9 +77,8 @@ class ResidualBlock(nn.Module):
 
 
 class DeformationNetwork(nn.Module):
-    def __init__(self, residual_block_count) -> None:
+    def __init__(self, hidden_dimension, residual_block_count) -> None:
         super(DeformationNetwork, self).__init__()
-        hidden_dimension = 128
         self.fc_in = nn.Linear(100, hidden_dimension)
         self.residual_blocks = nn.Sequential(
             *(ResidualBlock(hidden_dimension) for _ in range(residual_block_count))
@@ -358,6 +358,7 @@ def export_deformation_network(
     deformation_network: DeformationNetwork,
     timestep_count: int,
     residual_block_count: int,
+    hidden_dimension: int,
 ):
     network_directory_path = (
         run_output_directory_path / f"{wandb.run.name}_deformation_network"
@@ -374,6 +375,7 @@ def export_deformation_network(
     (network_directory_path / "residual_block_count").write_text(
         f"{residual_block_count}"
     )
+    (network_directory_path / "hidden_dimension").write_text(f"{hidden_dimension}")
 
     network_state_dict_path = network_directory_path / f"state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
@@ -556,7 +558,8 @@ def train(config: Config):
         timestep_count_limit=config.timestep_count_limit,
     )
     deformation_network = DeformationNetwork(
-        residual_block_count=config.residual_block_count
+        hidden_dimension=config.hidden_dimension,
+        residual_block_count=config.residual_block_count,
     ).cuda()
     optimizer = torch.optim.Adam(
         params=deformation_network.parameters(), lr=config.learning_rate
@@ -695,6 +698,7 @@ def train(config: Config):
             deformation_network=deformation_network,
             timestep_count=timestep_count,
             residual_block_count=config.residual_block_count,
+            hidden_dimension=config.hidden_dimension,
         )
         export_visualizations(
             run_output_directory_path=run_output_directory_path,
@@ -721,6 +725,7 @@ def main():
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
+    argument_parser.add_argument("-hd", "--hidden-dimension", type=int, default=128)
     argument_parser.add_argument("-r", "--residual-block-count", type=int, default=6)
     argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument("-fps", type=int, default=30)
@@ -728,6 +733,7 @@ def main():
     config = Config(
         sequence_name=args.sequence_name,
         data_directory_path=args.data_directory_path,
+        hidden_dimension=args.hidden_dimension,
         residual_block_count=args.residual_block_count,
         learning_rate=args.learning_rate,
         timestep_count_limit=args.timestep_count_limit,
