@@ -640,6 +640,7 @@ def train(config: Config):
                 f"train-loss/rigidity": rigidity_loss.item(),
                 f"learning-rate": optimizer.param_groups[0]["lr"],
                 f"timestep": timestep,
+                f"step_size": step_size,
             },
             step=i,
         )
