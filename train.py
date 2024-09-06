@@ -749,8 +749,8 @@ def main():
         "-wi", "--warmup-iteration-count", type=int, default=15_000
     )
     argument_parser.add_argument(
-        "--timestep_schedule",
         "-ts",
+        "--timestep_schedule",
         type=parse_timestep_schedule,
         help="Timestep schedule as list of tuples (start, step_size), e.g. '0,3 50000,2 80000,1'",
         default=[(0, 1)],
