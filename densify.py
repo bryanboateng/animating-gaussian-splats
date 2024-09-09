@@ -222,7 +222,7 @@ def densify(sequence_path: Path):
         total_loss, image_loss, segmentation_loss, densification_variables = (
             calculate_image_and_segmentation_loss(
                 gaussian_cloud_parameters=parameters,
-                target_view=view,
+                target_view=view.cuda(),
                 densification_variables=densification_variables,
             )
         )

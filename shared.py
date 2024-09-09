@@ -16,6 +16,10 @@ class View:
     image: torch.Tensor
     segmentation_mask: torch.Tensor
 
+    def cuda(self):
+        self.image = self.image.cuda()
+        self.segmentation_mask = self.segmentation_mask.cuda()
+
 
 @dataclass
 class DensificationVariables:
@@ -124,53 +128,41 @@ def create_render_settings(
     )
 
 
-def load_view(dataset_metadata, timestep, camera_index, sequence_path: Path):
-    filename = dataset_metadata["fn"][timestep][camera_index]
-    segmentation_mask = (
-        torch.tensor(
+def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
+    views = []
+    for camera_index in range(len(dataset_metadata["fn"][timestep])):
+        filename = dataset_metadata["fn"][timestep][camera_index]
+        segmentation_mask = torch.tensor(
             np.array(
                 copy.deepcopy(
                     Image.open(sequence_path / "seg" / filename.replace(".jpg", ".png"))
                 )
             ).astype(np.float32)
-        )
-        .float()
-        .cuda()
-    )
-    return View(
-        camera_index=camera_index,
-        render_settings=create_render_settings(
-            image_width=dataset_metadata["w"],
-            image_height=dataset_metadata["h"],
-            intrinsic_matrix=dataset_metadata["k"][timestep][camera_index],
-            extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
-        ),
-        image=torch.tensor(
-            np.array(copy.deepcopy(Image.open(sequence_path / "ims" / filename)))
-        )
-        .float()
-        .cuda()
-        .permute(2, 0, 1)
-        / 255,
-        segmentation_mask=torch.stack(
-            (
-                segmentation_mask,
-                torch.zeros_like(segmentation_mask),
-                1 - segmentation_mask,
-            )
-        ),
-    )
-
-
-def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
-    views = []
-    for camera_index in range(len(dataset_metadata["fn"][timestep])):
+        ).float()
         views.append(
-            load_view(
-                dataset_metadata=dataset_metadata,
-                timestep=timestep,
+            View(
                 camera_index=camera_index,
-                sequence_path=sequence_path,
+                render_settings=create_render_settings(
+                    image_width=dataset_metadata["w"],
+                    image_height=dataset_metadata["h"],
+                    intrinsic_matrix=dataset_metadata["k"][timestep][camera_index],
+                    extrinsic_matrix=dataset_metadata["w2c"][timestep][camera_index],
+                ),
+                image=torch.tensor(
+                    np.array(
+                        copy.deepcopy(Image.open(sequence_path / "ims" / filename))
+                    )
+                )
+                .float()
+                .permute(2, 0, 1)
+                / 255,
+                segmentation_mask=torch.stack(
+                    (
+                        segmentation_mask,
+                        torch.zeros_like(segmentation_mask),
+                        1 - segmentation_mask,
+                    )
+                ),
             )
         )
     return views

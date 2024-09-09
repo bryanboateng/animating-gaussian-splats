@@ -20,7 +20,6 @@ from external import calc_ssim, build_rotation
 from shared import (
     compute_knn_indices_and_squared_distances,
     load_timestep_views,
-    load_view,
     View,
     create_render_arguments,
     create_render_settings,
@@ -189,6 +188,19 @@ def encode_means_and_rotations(
         encoded_normalized_rotations,
         small_positional_encoding,
     )
+
+
+def load_all_views(dataset_metadata, timestep_count: int, sequence_path: Path):
+    views = []
+    for timestep in range(1, timestep_count):
+        views += [
+            load_timestep_views(
+                dataset_metadata=dataset_metadata,
+                timestep=timestep,
+                sequence_path=sequence_path,
+            )
+        ]
+    return views
 
 
 def get_inverted_foreground_rotations(
@@ -584,6 +596,11 @@ def train(config: Config):
         small_positional_encoding,
     ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
     camera_count = len(dataset_metadata["fn"][0])
+    views = load_all_views(
+        dataset_metadata=dataset_metadata,
+        timestep_count=timestep_count,
+        sequence_path=config.data_directory_path / config.sequence_name,
+    )
     for i in tqdm(range(config.total_iteration_count), desc="Training"):
         timestep = (i % (timestep_count - 1)) + 1
         camera_index = torch.randint(0, camera_count, ())
@@ -595,12 +612,7 @@ def train(config: Config):
                 initial_neighbor_indices=initial_neighbor_info.indices,
             )
 
-        view = load_view(
-            dataset_metadata=dataset_metadata,
-            timestep=timestep,
-            camera_index=camera_index,
-            sequence_path=config.data_directory_path / config.sequence_name,
-        )
+        view = views[timestep - 1][camera_index]
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
@@ -613,7 +625,7 @@ def train(config: Config):
 
         total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-            target_view=view,
+            target_view=view.cuda(),
             initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
             rigidity_loss_weight=(
@@ -680,7 +692,7 @@ def train(config: Config):
             for view in timestep_views:
                 _, _, image_loss = calculate_image_loss(
                     gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                    target_view=view,
+                    target_view=view.cuda(),
                 )
                 image_losses.append(image_loss.item())
         wandb.log(
