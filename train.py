@@ -38,7 +38,6 @@ class Config:
     output_directory_path: Path
     total_iteration_count: int
     warmup_iteration_count: int
-    timestep_schedule: tuple[tuple[int, int]]
     fps: int
 
 
@@ -585,18 +584,8 @@ def train(config: Config):
         small_positional_encoding,
     ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
     camera_count = len(dataset_metadata["fn"][0])
-
-    timestep_schedule_step_index = 0
-    step_size = config.timestep_schedule[timestep_schedule_step_index][1]
     for i in tqdm(range(config.total_iteration_count), desc="Training"):
-        if timestep_schedule_step_index < len(config.timestep_schedule) - 1:
-            if i >= config.timestep_schedule[timestep_schedule_step_index + 1][0]:
-                timestep_schedule_step_index += 1
-                step_size = config.timestep_schedule[timestep_schedule_step_index][1]
-        number_of_timesteps_in_schedule_step = (
-            timestep_count + step_size - 1
-        ) // step_size
-        timestep = ((i % number_of_timesteps_in_schedule_step) * step_size) + 1
+        timestep = (i % (timestep_count - 1)) + 1
         camera_index = torch.randint(0, camera_count, ())
 
         if timestep == 1:
@@ -639,8 +628,6 @@ def train(config: Config):
                 f"train-loss/image": image_loss.item(),
                 f"train-loss/rigidity": rigidity_loss.item(),
                 f"learning-rate": optimizer.param_groups[0]["lr"],
-                f"timestep": timestep,
-                f"step_size": step_size,
             },
             step=i,
         )
@@ -722,20 +709,6 @@ def train(config: Config):
         )
 
 
-def parse_timestep_schedule(argument: str):
-    try:
-        pairs = argument.split()
-        schedule = []
-        for pair in pairs:
-            pair_components = map(int, pair.split(","))
-            schedule.append((next(pair_components), next(pair_components)))
-        return tuple(sorted(schedule, key=lambda x: x[0]))
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "Format must be 'start1,step1 start2,step2 ...'."
-        )
-
-
 def main():
     argument_parser = argparse.ArgumentParser(prog="Animating Gaussian Splats")
     argument_parser.add_argument("sequence_name", metavar="sequence-name", type=str)
@@ -748,13 +721,6 @@ def main():
     )
     argument_parser.add_argument(
         "-wi", "--warmup-iteration-count", type=int, default=15_000
-    )
-    argument_parser.add_argument(
-        "-ts",
-        "--timestep_schedule",
-        type=parse_timestep_schedule,
-        help="Timestep schedule as list of tuples (start, step_size), e.g. '0,3 50000,2 80000,1'",
-        default=[(0, 1)],
     )
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
@@ -774,7 +740,6 @@ def main():
         output_directory_path=args.output_directory_path,
         total_iteration_count=args.total_iteration_count,
         warmup_iteration_count=args.warmup_iteration_count,
-        timestep_schedule=args.timestep_schedule,
         fps=args.fps,
     )
     train(config=config)
