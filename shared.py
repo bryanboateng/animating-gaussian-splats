@@ -17,8 +17,12 @@ class View:
     segmentation_mask: torch.Tensor
 
     def cuda(self):
-        self.image = self.image.cuda()
-        self.segmentation_mask = self.segmentation_mask.cuda()
+        return View(
+            camera_index=self.camera_index,
+            render_settings=self.render_settings,
+            image=self.image.cuda(),
+            segmentation_mask=self.segmentation_mask.cuda(),
+        )
 
 
 @dataclass
