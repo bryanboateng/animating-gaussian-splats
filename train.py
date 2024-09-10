@@ -424,6 +424,8 @@ def export_visualization(
     visualizations_directory_path: Path,
     fps: int,
 ):
+    frames_directory = visualizations_directory_path / f"{name}_frames"
+    frames_directory.mkdir(parents=True, exist_ok=True)
     frames = []
     for timestep in tqdm(range(timestep_count), desc=f"Creating Visualization {name}"):
         if timestep == 0:
@@ -474,9 +476,7 @@ def export_visualization(
             .transpose(1, 2, 0)
         )
         imageio.imwrite(
-            visualizations_directory_path
-            / f"{name}_frames"
-            / f"frame_{timestep:04d}.png",
+            frames_directory / f"frame_{timestep:04d}.png",
             frame,
         )
         frames.append(frame)
