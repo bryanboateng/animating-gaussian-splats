@@ -424,7 +424,7 @@ def export_visualization(
     visualizations_directory_path: Path,
     fps: int,
 ):
-    render_images = []
+    frames = []
     for timestep in tqdm(range(timestep_count), desc=f"Creating Visualization {name}"):
         if timestep == 0:
             timestep_gaussian_cloud_parameters = initial_gaussian_cloud_parameters
@@ -461,7 +461,7 @@ def export_visualization(
         ) = Renderer(
             raster_settings=render_settings
         )(**create_render_arguments(timestep_gaussian_cloud_parameters))
-        render_images.append(
+        frame = (
             (
                 255
                 * np.clip(
@@ -473,9 +473,16 @@ def export_visualization(
             .astype(np.uint8)
             .transpose(1, 2, 0)
         )
+        imageio.imwrite(
+            visualizations_directory_path
+            / f"{name}_frames"
+            / f"frame_{timestep:04d}.png",
+            frame,
+        )
+        frames.append(frame)
     imageio.mimwrite(
         visualizations_directory_path / f"{name}.mp4",
-        render_images,
+        frames,
         fps=fps,
     )
 
