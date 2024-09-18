@@ -389,7 +389,7 @@ def export_deformation_network(
     )
     (network_directory_path / "hidden_dimension").write_text(f"{hidden_dimension}")
 
-    network_state_dict_path = network_directory_path / f"state_dict.pth"
+    network_state_dict_path = network_directory_path / "state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
     wandb.save(
         network_directory_path / "*",
@@ -641,12 +641,12 @@ def train(config: Config):
         )
         wandb.log(
             {
-                f"train-loss/total": total_loss.item(),
-                f"train-loss/l1": l1_loss.item(),
-                f"train-loss/ssim": ssim_loss.item(),
-                f"train-loss/image": image_loss.item(),
-                f"train-loss/rigidity": rigidity_loss.item(),
-                f"learning-rate": optimizer.param_groups[0]["lr"],
+                "train-loss/total": total_loss.item(),
+                "train-loss/l1": l1_loss.item(),
+                "train-loss/ssim": ssim_loss.item(),
+                "train-loss/image": image_loss.item(),
+                "train-loss/rigidity": rigidity_loss.item(),
+                "learning-rate": optimizer.param_groups[0]["lr"],
             },
             step=i,
         )
@@ -670,7 +670,7 @@ def train(config: Config):
             )
         )
         wandb.log(
-            {f"gradient-norm": total_norm},
+            {"gradient-norm": total_norm},
             step=i,
         )
 
@@ -703,7 +703,7 @@ def train(config: Config):
                 )
                 image_losses.append(image_loss.item())
         wandb.log(
-            {f"mean-image-loss": sum(image_losses) / len(image_losses)},
+            {"mean-image-loss": sum(image_losses) / len(image_losses)},
             step=config.total_iteration_count + timestep,
         )
     with torch.no_grad():

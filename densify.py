@@ -215,7 +215,7 @@ def densify(sequence_path: Path):
         sequence_path=sequence_path,
     )
     timestep_view_buffer = []
-    for i in tqdm(range(30_000), desc=f"Densifying"):
+    for i in tqdm(range(30_000), desc="Densifying"):
         view = get_random_element(
             input_list=timestep_view_buffer, fallback_list=timestep_views
         )
