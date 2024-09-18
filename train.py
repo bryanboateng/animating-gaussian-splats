@@ -654,14 +654,15 @@ def train(config: Config):
             timestep_count=timestep_count,
         )
 
+        rigidity_loss_weight = (
+            2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
+        )
         total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_view=view.cuda(),
             initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
-            rigidity_loss_weight=(
-                2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
-            ),
+            rigidity_loss_weight=rigidity_loss_weight,
         )
         wandb.log(
             {
@@ -670,6 +671,7 @@ def train(config: Config):
                 "train-loss/ssim": ssim_loss.item(),
                 "train-loss/image": image_loss.item(),
                 "train-loss/rigidity": rigidity_loss.item(),
+                "rigidity-loss-weight": rigidity_loss_weight,
                 "learning-rate": optimizer.param_groups[0]["lr"],
                 "deformation-scale-factor": deformation_scale_factor.item(),
             },
