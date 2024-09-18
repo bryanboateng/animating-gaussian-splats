@@ -383,11 +383,17 @@ def export_deformation_network(
         dst=network_directory_path / "densified_initial_gaussian_cloud_parameters.pth",
     )
 
-    (network_directory_path / "timestep_count").write_text(f"{timestep_count}")
-    (network_directory_path / "residual_block_count").write_text(
-        f"{residual_block_count}"
-    )
-    (network_directory_path / "hidden_dimension").write_text(f"{hidden_dimension}")
+    config_file_path = network_directory_path / "config.json"
+    with config_file_path.open("w") as config_file:
+        json.dump(
+            {
+                "timestep_count": timestep_count,
+                "residual_block_count": residual_block_count,
+                "hidden_dimension": hidden_dimension,
+            },
+            config_file,
+            indent="\t",
+        )
 
     network_state_dict_path = network_directory_path / "state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
