@@ -348,7 +348,7 @@ def calculate_loss(
     target_view: View,
     initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
-    rigidity_loss_weight,
+    i: int,
 ):
     rigidity_loss = calculate_rigidity_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
@@ -358,13 +358,20 @@ def calculate_loss(
     l1_loss, ssim_loss, image_loss = calculate_image_loss(
         gaussian_cloud_parameters, target_view
     )
-    return (
-        image_loss + 3 * rigidity_loss_weight * rigidity_loss,
-        l1_loss,
-        ssim_loss,
-        image_loss,
-        rigidity_loss,
+    scaled_rigidity_loss = 4 * rigidity_loss
+    total_loss = image_loss + scaled_rigidity_loss
+    wandb.log(
+        {
+            "train-loss/total": total_loss.item(),
+            "train-loss/l1": l1_loss.item(),
+            "train-loss/ssim": ssim_loss.item(),
+            "train-loss/image": image_loss.item(),
+            "train-loss/rigidity": rigidity_loss.item(),
+            "train-loss/rigidity-scaled": scaled_rigidity_loss.item(),
+        },
+        step=i,
     )
+    return total_loss
 
 
 def export_deformation_network(
@@ -654,24 +661,15 @@ def train(config: Config):
             timestep_count=timestep_count,
         )
 
-        rigidity_loss_weight = (
-            2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
-        )
-        total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
+        loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_view=view.cuda(),
             initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
-            rigidity_loss_weight=rigidity_loss_weight,
+            i=i,
         )
         wandb.log(
             {
-                "train-loss/total": total_loss.item(),
-                "train-loss/l1": l1_loss.item(),
-                "train-loss/ssim": ssim_loss.item(),
-                "train-loss/image": image_loss.item(),
-                "train-loss/rigidity": rigidity_loss.item(),
-                "rigidity-loss-weight": rigidity_loss_weight,
                 "learning-rate": optimizer.param_groups[0]["lr"],
                 "deformation-scale-factor": deformation_scale_factor.item(),
             },
@@ -683,7 +681,7 @@ def train(config: Config):
             initial_neighbor_indices=initial_neighbor_info.indices,
         )
 
-        total_loss.backward()
+        loss.backward()
 
         total_norm = torch.sqrt(
             torch.sum(
