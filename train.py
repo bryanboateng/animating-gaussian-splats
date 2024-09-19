@@ -362,8 +362,8 @@ def calculate_loss(
     l1_loss, ssim_loss, image_loss = calculate_image_loss(
         gaussian_cloud_parameters, target_view
     )
-    scaled_rigidity_loss = 4 * rigidity_loss
-    total_loss = image_loss + scaled_rigidity_loss
+    weighted_rigidity_loss = 4 * rigidity_loss
+    total_loss = image_loss + weighted_rigidity_loss
     wandb.log(
         {
             "train-loss/total": total_loss.item(),
@@ -371,7 +371,7 @@ def calculate_loss(
             "train-loss/ssim": ssim_loss.item(),
             "train-loss/image": image_loss.item(),
             "train-loss/rigidity": rigidity_loss.item(),
-            "train-loss/rigidity-scaled": scaled_rigidity_loss.item(),
+            "train-loss/rigidity-weighted": weighted_rigidity_loss.item(),
         },
         step=i,
     )
