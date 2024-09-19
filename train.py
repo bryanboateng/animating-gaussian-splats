@@ -686,8 +686,8 @@ def train(config: Config):
         wandb.log(
             {
                 "learning-rate": optimizer.param_groups[0]["lr"],
-                "means_deformation-scale-factor": means_deformation_scale_factor.item(),
-                "rotations_deformation-scale-factor": rotations_deformation_scale_factor.item(),
+                "means-deformation-scale-factor": means_deformation_scale_factor.item(),
+                "rotations-deformation-scale-factor": rotations_deformation_scale_factor.item(),
             },
             step=i,
         )
