@@ -126,7 +126,7 @@ def get_linear_warmup_cos_annealing(
     optimizer, warmup_iters, warmup_start_factor, total_iters
 ):
     scheduler_warmup = LinearLR(
-        optimizer, start_factor=warumup_start_factor, total_iters=warmup_iters
+        optimizer, start_factor=warmup_start_factor, total_iters=warmup_iters
     )
     scheduler_cos_decay = CosineAnnealingLR(optimizer, T_max=total_iters - warmup_iters)
     scheduler = SequentialLR(
