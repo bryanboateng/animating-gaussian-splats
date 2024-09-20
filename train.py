@@ -32,6 +32,7 @@ class Config:
     data_directory_path: Path
     hidden_dimension: int
     residual_block_count: int
+    rigidity_loss_weight: float
     learning_rate: float
     initial_means_deformation_scale_factor: float
     initial_rotations_deformation_scale_factor: float
@@ -352,6 +353,7 @@ def calculate_loss(
     target_view: View,
     initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
+    rigidity_loss_weight: float,
     i: int,
 ):
     rigidity_loss = calculate_rigidity_loss(
@@ -362,7 +364,7 @@ def calculate_loss(
     l1_loss, ssim_loss, image_loss = calculate_image_loss(
         gaussian_cloud_parameters, target_view
     )
-    weighted_rigidity_loss = 4 * rigidity_loss
+    weighted_rigidity_loss = rigidity_loss_weight * rigidity_loss
     total_loss = image_loss + weighted_rigidity_loss
     wandb.log(
         {
@@ -681,6 +683,7 @@ def train(config: Config):
             target_view=view.cuda(),
             initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
+            rigidity_loss_weight=config.rigidity_loss_weight,
             i=i,
         )
         wandb.log(
@@ -793,6 +796,9 @@ def main():
     )
     argument_parser.add_argument("-hd", "--hidden-dimension", type=int, default=128)
     argument_parser.add_argument("-r", "--residual-block-count", type=int, default=6)
+    argument_parser.add_argument(
+        "-rlw", "--rigidity-loss-weight", type=float, default=3
+    )
     argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument(
         "-msf", "--initial-means-deformation-scale-factor", type=float, default=1e-3
@@ -807,6 +813,7 @@ def main():
         data_directory_path=args.data_directory_path,
         hidden_dimension=args.hidden_dimension,
         residual_block_count=args.residual_block_count,
+        rigidity_loss_weight=args.rigidity_loss_weight,
         learning_rate=args.learning_rate,
         initial_means_deformation_scale_factor=args.initial_means_deformation_scale_factor,
         initial_rotations_deformation_scale_factor=args.initial_rotations_deformation_scale_factor,
