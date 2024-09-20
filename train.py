@@ -796,7 +796,7 @@ def main():
         "-wi", "--warmup-iteration-count", type=int, default=15_000
     )
     argument_parser.add_argument(
-        "-wsf", "--warmup-start-factor", type=int, default=1 / 1_000
+        "-wsf", "--warmup-start-factor", type=float, default=1 / 1_000
     )
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
