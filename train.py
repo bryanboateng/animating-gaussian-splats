@@ -40,6 +40,7 @@ class Config:
     output_directory_path: Path
     total_iteration_count: int
     warmup_iteration_count: int
+    warmup_start_factor: float
     fps: int
 
 
@@ -121,9 +122,11 @@ def get_timestep_count(dataset_metadata, timestep_count_limit: int):
         return min(sequence_length, timestep_count_limit)
 
 
-def get_linear_warmup_cos_annealing(optimizer, warmup_iters, total_iters):
+def get_linear_warmup_cos_annealing(
+    optimizer, warmup_iters, warmup_start_factor, total_iters
+):
     scheduler_warmup = LinearLR(
-        optimizer, start_factor=1 / 1000, total_iters=warmup_iters
+        optimizer, start_factor=warumup_start_factor, total_iters=warmup_iters
     )
     scheduler_cos_decay = CosineAnnealingLR(optimizer, T_max=total_iters - warmup_iters)
     scheduler = SequentialLR(
@@ -632,6 +635,7 @@ def train(config: Config):
     scheduler = get_linear_warmup_cos_annealing(
         optimizer,
         warmup_iters=config.warmup_iteration_count,
+        warmup_start_factor=config.warmup_start_factor,
         total_iters=config.total_iteration_count,
     )
 
@@ -792,6 +796,9 @@ def main():
         "-wi", "--warmup-iteration-count", type=int, default=15_000
     )
     argument_parser.add_argument(
+        "-wsf", "--warmup-start-factor", type=int, default=1 / 1_000
+    )
+    argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
     argument_parser.add_argument("-hd", "--hidden-dimension", type=int, default=128)
@@ -821,6 +828,7 @@ def main():
         output_directory_path=args.output_directory_path,
         total_iteration_count=args.total_iteration_count,
         warmup_iteration_count=args.warmup_iteration_count,
+        warmup_start_factor=args.warmup_start_factor,
         fps=args.fps,
     )
     train(config=config)
