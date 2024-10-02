@@ -2,6 +2,7 @@ import argparse
 import copy
 import json
 import math
+import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -329,7 +330,7 @@ def calculate_rigidity_loss(
     )
 
 
-def calculate_image_loss(gaussian_cloud_parameters, target_view: View):
+def calculate_l1_and_ssim_loss(gaussian_cloud_parameters, target_view: View):
     (
         rendered_image,
         _,
@@ -339,32 +340,73 @@ def calculate_image_loss(gaussian_cloud_parameters, target_view: View):
     )(**create_render_arguments(gaussian_cloud_parameters))
     l1_loss = torch.nn.functional.l1_loss(rendered_image, target_view.image)
     ssim_loss = 1.0 - calc_ssim(rendered_image, target_view.image)
-    image_loss = 0.8 * l1_loss + 0.2 * ssim_loss
-    return l1_loss, ssim_loss, image_loss
+    return l1_loss, ssim_loss
 
 
-def calculate_loss(
+def calculate_base_losses(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     target_view: View,
     initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
-    rigidity_loss_weight,
 ):
     rigidity_loss = calculate_rigidity_loss(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
         initial_neighbor_info=initial_neighbor_info,
         previous_timestep_foreground_info=previous_timestep_foreground_info,
     )
-    l1_loss, ssim_loss, image_loss = calculate_image_loss(
+    l1_loss, ssim_loss = calculate_l1_and_ssim_loss(
         gaussian_cloud_parameters, target_view
     )
-    return (
-        image_loss + 3 * rigidity_loss_weight * rigidity_loss,
-        l1_loss,
-        ssim_loss,
-        image_loss,
-        rigidity_loss,
+    return torch.stack(
+        [
+            l1_loss,
+            ssim_loss,
+            rigidity_loss,
+        ],
+        dim=0,
     )
+
+
+def combine_l1_and_ssim_loss(l1_loss: torch.Tensor, ssim_loss: torch.tensor):
+    return 0.8 * l1_loss + 0.2 * ssim_loss
+
+
+def calculate_loss(
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    target_views: list[View],
+    initial_neighbor_info: NeighborInfo,
+    previous_timestep_foreground_info: ForegroundInfo,
+    rigidity_loss_weight,
+    i: int,
+):
+    losses = torch.stack(
+        [
+            calculate_base_losses(
+                gaussian_cloud_parameters=gaussian_cloud_parameters,
+                target_view=target_view,
+                initial_neighbor_info=initial_neighbor_info,
+                previous_timestep_foreground_info=previous_timestep_foreground_info,
+            )
+            for target_view in target_views
+        ]
+    )
+    summed_losses = losses.sum(dim=0)
+    l1_loss_sum = summed_losses[0]
+    ssim_loss_sum = summed_losses[1]
+    rigidity_loss_sum = summed_losses[2]
+    image_loss = combine_l1_and_ssim_loss(l1_loss=l1_loss_sum, ssim_loss=ssim_loss_sum)
+    total_loss = image_loss + 3 * rigidity_loss_weight * summed_losses[2]
+    wandb.log(
+        {
+            "train-loss/total": total_loss.item(),
+            "train-loss/l1": l1_loss_sum.item(),
+            "train-loss/ssim": ssim_loss_sum.item(),
+            "train-loss/image": image_loss.item(),
+            "train-loss/rigidity": rigidity_loss_sum.item(),
+        },
+        step=i,
+    )
+    return total_loss
 
 
 def export_deformation_network(
@@ -642,7 +684,6 @@ def train(config: Config):
                 initial_neighbor_indices=initial_neighbor_info.indices,
             )
 
-        view = views[timestep - 1][camera_index]
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
             deformation_scale_factor=deformation_scale_factor,
@@ -657,20 +698,18 @@ def train(config: Config):
         rigidity_loss_weight = (
             2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
         )
-        total_loss, l1_loss, ssim_loss, image_loss, rigidity_loss = calculate_loss(
+        loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-            target_view=view.cuda(),
+            target_views=[
+                view.cuda() for view in random.sample(views[timestep - 1], 5)
+            ],
             initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
             rigidity_loss_weight=rigidity_loss_weight,
+            i=i,
         )
         wandb.log(
             {
-                "train-loss/total": total_loss.item(),
-                "train-loss/l1": l1_loss.item(),
-                "train-loss/ssim": ssim_loss.item(),
-                "train-loss/image": image_loss.item(),
-                "train-loss/rigidity": rigidity_loss.item(),
                 "rigidity-loss-weight": rigidity_loss_weight,
                 "learning-rate": optimizer.param_groups[0]["lr"],
                 "deformation-scale-factor": deformation_scale_factor.item(),
@@ -683,7 +722,7 @@ def train(config: Config):
             initial_neighbor_indices=initial_neighbor_info.indices,
         )
 
-        total_loss.backward()
+        loss.backward()
 
         total_norm = torch.sqrt(
             torch.sum(
@@ -725,11 +764,15 @@ def train(config: Config):
                 config.data_directory_path / config.sequence_name,
             )
             for view in timestep_views:
-                _, _, image_loss = calculate_image_loss(
+                l1_loss, ssim_loss = calculate_l1_and_ssim_loss(
                     gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                     target_view=view.cuda(),
                 )
-                image_losses.append(image_loss.item())
+                image_losses.append(
+                    combine_l1_and_ssim_loss(
+                        l1_loss=l1_loss, ssim_loss=ssim_loss
+                    ).item()
+                )
         wandb.log(
             {"mean-image-loss": sum(image_losses) / len(image_losses)},
             step=config.total_iteration_count + timestep,
