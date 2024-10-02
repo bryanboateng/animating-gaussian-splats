@@ -34,7 +34,6 @@ class Config:
     hidden_dimension: int
     residual_block_count: int
     learning_rate: float
-    initial_deformation_scale_factor: float
     timestep_count_limit: Optional[int]
     output_directory_path: Path
     total_iteration_count: int
@@ -241,7 +240,6 @@ def update_previous_timestep_foreground_info(
 
 def update_gaussian_cloud_parameters(
     deformation_network: DeformationNetwork,
-    deformation_scale_factor: torch.nn.Parameter,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     encoded_normalized_initial_means,
     encoded_normalized_initial_rotations,
@@ -277,13 +275,11 @@ def update_gaussian_cloud_parameters(
     updated_gaussian_cloud_parameters["means"] = updated_gaussian_cloud_parameters[
         "means"
     ].detach()
-    updated_gaussian_cloud_parameters["means"] += means_delta * deformation_scale_factor
+    updated_gaussian_cloud_parameters["means"] += means_delta * 0.01
     updated_gaussian_cloud_parameters["rotation_quaternions"] = (
         updated_gaussian_cloud_parameters["rotation_quaternions"].detach()
     )
-    updated_gaussian_cloud_parameters["rotation_quaternions"] += (
-        rotations_delta * deformation_scale_factor
-    )
+    updated_gaussian_cloud_parameters["rotation_quaternions"] += rotations_delta * 0.01
     return updated_gaussian_cloud_parameters
 
 
@@ -414,7 +410,6 @@ def export_deformation_network(
     sequence_name: str,
     data_directory_path: Path,
     deformation_network: DeformationNetwork,
-    deformation_scale_factor: float,
     timestep_count: int,
     residual_block_count: int,
     hidden_dimension: int,
@@ -437,7 +432,6 @@ def export_deformation_network(
                 "timestep_count": timestep_count,
                 "residual_block_count": residual_block_count,
                 "hidden_dimension": hidden_dimension,
-                "deformation_scale_factor": deformation_scale_factor,
             },
             config_file,
             indent="\t",
@@ -469,7 +463,6 @@ def export_visualization(
     timestep_count: int,
     name: str,
     initial_gaussian_cloud_parameters,
-    deformation_scale_factor: torch.nn.Parameter,
     deformation_network: DeformationNetwork,
     small_positional_encoding: PositionalEncoding,
     encoded_normalized_initial_means: torch.Tensor,
@@ -489,7 +482,6 @@ def export_visualization(
         else:
             timestep_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
-                deformation_scale_factor=deformation_scale_factor,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 encoded_normalized_initial_means=encoded_normalized_initial_means,
                 encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
@@ -547,7 +539,6 @@ def export_visualizations(
     run_output_directory_path: Path,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     deformation_network: DeformationNetwork,
-    deformation_scale_factor: torch.nn.Parameter,
     timestep_count: int,
     fps: int,
 ):
@@ -606,7 +597,6 @@ def export_visualizations(
             timestep_count=timestep_count,
             name=name,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            deformation_scale_factor=deformation_scale_factor,
             deformation_network=deformation_network,
             small_positional_encoding=small_positional_encoding,
             encoded_normalized_initial_means=encoded_normalized_initial_means,
@@ -638,15 +628,8 @@ def train(config: Config):
         hidden_dimension=config.hidden_dimension,
         residual_block_count=config.residual_block_count,
     ).cuda()
-    deformation_scale_factor = torch.nn.Parameter(
-        torch.tensor(config.initial_deformation_scale_factor)
-    )
     optimizer = torch.optim.Adam(
-        [
-            {"params": deformation_network.parameters()},
-            {"params": [deformation_scale_factor]},
-        ],
-        lr=config.learning_rate,
+        params=deformation_network.parameters(), lr=config.learning_rate
     )
     scheduler = get_linear_warmup_cos_annealing(
         optimizer,
@@ -686,7 +669,6 @@ def train(config: Config):
 
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
-            deformation_scale_factor=deformation_scale_factor,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             encoded_normalized_initial_means=encoded_normalized_initial_means,
             encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
@@ -712,7 +694,6 @@ def train(config: Config):
             {
                 "rigidity-loss-weight": rigidity_loss_weight,
                 "learning-rate": optimizer.param_groups[0]["lr"],
-                "deformation-scale-factor": deformation_scale_factor.item(),
             },
             step=i,
         )
@@ -750,7 +731,6 @@ def train(config: Config):
         with torch.no_grad():
             updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
-                deformation_scale_factor=deformation_scale_factor,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 encoded_normalized_initial_means=encoded_normalized_initial_means,
                 encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
@@ -786,7 +766,6 @@ def train(config: Config):
             sequence_name=config.sequence_name,
             data_directory_path=config.data_directory_path,
             deformation_network=deformation_network,
-            deformation_scale_factor=deformation_scale_factor.item(),
             timestep_count=timestep_count,
             residual_block_count=config.residual_block_count,
             hidden_dimension=config.hidden_dimension,
@@ -795,7 +774,6 @@ def train(config: Config):
             run_output_directory_path=run_output_directory_path,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             deformation_network=deformation_network,
-            deformation_scale_factor=deformation_scale_factor,
             timestep_count=timestep_count,
             fps=config.fps,
         )
@@ -820,9 +798,6 @@ def main():
     argument_parser.add_argument("-hd", "--hidden-dimension", type=int, default=128)
     argument_parser.add_argument("-r", "--residual-block-count", type=int, default=6)
     argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
-    argument_parser.add_argument(
-        "-sf", "--initial-deformation-scale-factor", type=float, default=1e-4
-    )
     argument_parser.add_argument("-fps", type=int, default=30)
     args = argument_parser.parse_args()
     config = Config(
@@ -831,7 +806,6 @@ def main():
         hidden_dimension=args.hidden_dimension,
         residual_block_count=args.residual_block_count,
         learning_rate=args.learning_rate,
-        initial_deformation_scale_factor=args.initial_deformation_scale_factor,
         timestep_count_limit=args.timestep_count_limit,
         output_directory_path=args.output_directory_path,
         total_iteration_count=args.total_iteration_count,
