@@ -650,7 +650,6 @@ def train(config: Config):
         encoded_normalized_initial_rotations,
         small_positional_encoding,
     ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
-    camera_count = len(dataset_metadata["fn"][0])
     views = load_all_views(
         dataset_metadata=dataset_metadata,
         timestep_count=timestep_count,
