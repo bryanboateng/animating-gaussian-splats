@@ -16,14 +16,6 @@ class View:
     image: torch.Tensor
     segmentation_mask: torch.Tensor
 
-    def cuda(self):
-        return View(
-            camera_index=self.camera_index,
-            render_settings=self.render_settings,
-            image=self.image.cuda(),
-            segmentation_mask=self.segmentation_mask.cuda(),
-        )
-
 
 @dataclass
 class DensificationVariables:
@@ -136,13 +128,19 @@ def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
     views = []
     for camera_index in range(len(dataset_metadata["fn"][timestep])):
         filename = dataset_metadata["fn"][timestep][camera_index]
-        segmentation_mask = torch.tensor(
-            np.array(
-                copy.deepcopy(
-                    Image.open(sequence_path / "seg" / filename.replace(".jpg", ".png"))
-                )
-            ).astype(np.float32)
-        ).float()
+        segmentation_mask = (
+            torch.tensor(
+                np.array(
+                    copy.deepcopy(
+                        Image.open(
+                            sequence_path / "seg" / filename.replace(".jpg", ".png")
+                        )
+                    )
+                ).astype(np.float32)
+            )
+            .float()
+            .cuda()
+        )
         views.append(
             View(
                 camera_index=camera_index,
@@ -158,6 +156,7 @@ def load_timestep_views(dataset_metadata, timestep: int, sequence_path: Path):
                     )
                 )
                 .float()
+                .cuda()
                 .permute(2, 0, 1)
                 / 255,
                 segmentation_mask=torch.stack(

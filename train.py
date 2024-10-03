@@ -682,9 +682,7 @@ def train(config: Config):
         )
         loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-            target_views=[
-                view.cuda() for view in random.sample(views[timestep - 1], 5)
-            ],
+            target_views=random.sample(views[timestep - 1], 5),
             initial_neighbor_info=initial_neighbor_info,
             previous_timestep_foreground_info=previous_timestep_foreground_info,
             rigidity_loss_weight=rigidity_loss_weight,
@@ -746,7 +744,7 @@ def train(config: Config):
             for view in timestep_views:
                 l1_loss, ssim_loss = calculate_l1_and_ssim_loss(
                     gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                    target_view=view.cuda(),
+                    target_view=view,
                 )
                 image_losses.append(
                     combine_l1_and_ssim_loss(
