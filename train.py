@@ -658,7 +658,6 @@ def train(config: Config):
     )
     for i in tqdm(range(config.total_iteration_count), desc="Training"):
         timestep = (i % (timestep_count - 1)) + 1
-        camera_index = torch.randint(0, camera_count, ())
 
         if timestep == 1:
             update_previous_timestep_foreground_info(
