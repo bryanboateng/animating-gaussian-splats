@@ -32,7 +32,7 @@ class Config:
     sequence_name: str
     data_directory_path: Path
     hidden_dimension: int
-    residual_block_count: int
+    hidden_layer_count: int
     learning_rate: float
     timestep_count_limit: Optional[int]
     output_directory_path: Path
@@ -53,62 +53,102 @@ class ForegroundInfo:
     offsets_to_neighbors: Optional[torch.Tensor] = None
 
 
-class ResidualBlock(nn.Module):
-    def __init__(self, dimension) -> None:
-        super(ResidualBlock, self).__init__()
-        self.fc1 = nn.Linear(dimension, dimension, bias=False)
-        self.bn1 = nn.BatchNorm1d(dimension)
-        self.fc2 = nn.Linear(dimension, dimension, bias=False)
-        self.bn2 = nn.BatchNorm1d(dimension)
+class SineLayer(nn.Module):
+    def __init__(
+        self, input_dimension: int, output_dimension: int, is_first: bool, omega_0: int
+    ):
+        super(SineLayer, self).__init__()
+        self.omega_0 = omega_0
+        self.is_first = is_first
+
+        self.input_dimension = input_dimension
+        self.linear = nn.Linear(input_dimension, output_dimension)
+
+        with torch.no_grad():
+            if self.is_first:
+                self.linear.weight.uniform_(
+                    -1 / self.input_dimension, 1 / self.input_dimension
+                )
+            else:
+                self.linear.weight.uniform_(
+                    -np.sqrt(6 / self.input_dimension) / self.omega_0,
+                    np.sqrt(6 / self.input_dimension) / self.omega_0,
+                )
 
     def forward(self, x):
-        identity = x
-
-        x = self.fc1(x)
-        x = self.bn1(x)
-        x = nn.functional.gelu(x)
-        x = self.fc2(x)
-        x = self.bn2(x)
-
-        x += identity
-        x = nn.functional.gelu(x)
-
-        return x
+        return torch.sin(self.omega_0 * self.linear(x))
 
 
 class DeformationNetwork(nn.Module):
-    def __init__(self, hidden_dimension, residual_block_count) -> None:
+    def __init__(self, hidden_dimension, hidden_layer_count) -> None:
         super(DeformationNetwork, self).__init__()
-        self.fc_in = nn.Linear(100, hidden_dimension)
-        self.residual_blocks = nn.Sequential(
-            *(ResidualBlock(hidden_dimension) for _ in range(residual_block_count))
+
+        first_omega_0 = 30
+        hidden_omega_0 = 30
+
+        mean_dimension = 3
+        rotation_dimension = 4
+        progress_dimension = 1
+        layers = [
+            SineLayer(
+                mean_dimension + rotation_dimension + progress_dimension,
+                hidden_dimension,
+                is_first=True,
+                omega_0=first_omega_0,
+            )
+        ]
+        for _ in range(hidden_layer_count):
+            layers.append(
+                SineLayer(
+                    hidden_dimension,
+                    hidden_dimension,
+                    is_first=False,
+                    omega_0=hidden_omega_0,
+                )
+            )
+        fc_out = nn.Linear(hidden_dimension, mean_dimension + rotation_dimension)
+        with torch.no_grad():
+            fc_out.weight.uniform_(
+                -np.sqrt(6 / hidden_dimension) / hidden_omega_0,
+                np.sqrt(6 / hidden_dimension) / hidden_omega_0,
+            )
+        layers.append(fc_out)
+
+        self.layers = nn.Sequential(*layers)
+
+    def forward(
+        self,
+        initial_means: torch.Tensor,
+        initial_rotations: torch.Tensor,
+        normalized_initial_means: torch.Tensor,
+        normalized_initial_rotations: torch.Tensor,
+        progress: float,
+    ):
+        out = self.layers(
+            torch.cat(
+                (
+                    (
+                        torch.cat(
+                            (normalized_initial_means, normalized_initial_rotations),
+                            dim=1,
+                        )
+                    ),
+                    (
+                        torch.tensor(progress)
+                        .view(1, 1)
+                        .repeat(normalized_initial_means.shape[0], 1)
+                        .cuda()
+                    ),
+                ),
+                dim=1,
+            )
         )
-        self.fc_out = nn.Linear(hidden_dimension, 7)
-
-    def forward(self, input_, normalized_input, timestep):
-        out = torch.cat((normalized_input, timestep), dim=1)
-        out = self.fc_in(out)
-        out = self.residual_blocks(out)
-        out = self.fc_out(out)
-
-        out += input_
+        out += torch.cat(
+            (initial_means, initial_rotations),
+            dim=1,
+        )
 
         return out
-
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, L):
-        super(PositionalEncoding, self).__init__()
-        self.L = L
-        self.consts = ((torch.ones(L) * 2).pow(torch.arange(L)) * torch.pi).cuda()
-
-    def forward(self, x):
-        x = x[:, :, None]
-        A = (self.consts * x).repeat_interleave(2, 2)
-        A[:, :, ::2] = torch.sin(A[:, :, ::2])
-        A[:, :, 1::2] = torch.cos(A[:, :, ::2])
-
-        return A.permute(0, 2, 1).flatten(start_dim=1)
 
 
 def get_timestep_count(dataset_metadata, timestep_count_limit: int):
@@ -167,7 +207,7 @@ def initialize_variables(gaussian_cloud_parameters: dict[str, torch.nn.Parameter
     return neighbor_info, previous_timestep_foreground_info
 
 
-def encode_means_and_rotations(
+def normalize_means_and_rotations(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
 ):
     means = gaussian_cloud_parameters["means"]
@@ -180,15 +220,7 @@ def encode_means_and_rotations(
     normalized_rotations = (
         2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
     ) - 1.0
-    large_positional_encoding = PositionalEncoding(L=10)
-    small_positional_encoding = PositionalEncoding(L=4)
-    encoded_normalized_means = large_positional_encoding(normalized_means)
-    encoded_normalized_rotations = small_positional_encoding(normalized_rotations)
-    return (
-        encoded_normalized_means,
-        encoded_normalized_rotations,
-        small_positional_encoding,
-    )
+    return normalized_means, normalized_rotations
 
 
 def load_all_views(dataset_metadata, timestep_count: int, sequence_path: Path):
@@ -241,31 +273,17 @@ def update_previous_timestep_foreground_info(
 def update_gaussian_cloud_parameters(
     deformation_network: DeformationNetwork,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-    encoded_normalized_initial_means,
-    encoded_normalized_initial_rotations,
-    small_positional_encoding: PositionalEncoding,
+    normalized_initial_means,
+    normalized_initial_rotations,
     timestep,
     timestep_count,
 ):
-    encoded_timestep = small_positional_encoding(
-        torch.tensor(timestep / (timestep_count - 1))
-        .view(1, 1)
-        .repeat(encoded_normalized_initial_means.shape[0], 1)
-        .cuda()
-    )
     delta = deformation_network(
-        torch.cat(
-            (
-                initial_gaussian_cloud_parameters["means"],
-                initial_gaussian_cloud_parameters["rotation_quaternions"],
-            ),
-            dim=1,
-        ),
-        torch.cat(
-            (encoded_normalized_initial_means, encoded_normalized_initial_rotations),
-            dim=1,
-        ),
-        encoded_timestep,
+        initial_means=initial_gaussian_cloud_parameters["means"],
+        initial_rotations=initial_gaussian_cloud_parameters["rotation_quaternions"],
+        normalized_initial_means=normalized_initial_means,
+        normalized_initial_rotations=normalized_initial_rotations,
+        progress=timestep / (timestep_count - 1),
     )
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
@@ -411,7 +429,7 @@ def export_deformation_network(
     data_directory_path: Path,
     deformation_network: DeformationNetwork,
     timestep_count: int,
-    residual_block_count: int,
+    hidden_layer_count: int,
     hidden_dimension: int,
 ):
     network_directory_path = (
@@ -430,7 +448,7 @@ def export_deformation_network(
         json.dump(
             {
                 "timestep_count": timestep_count,
-                "residual_block_count": residual_block_count,
+                "hidden_layer_count": hidden_layer_count,
                 "hidden_dimension": hidden_dimension,
             },
             config_file,
@@ -464,9 +482,8 @@ def export_visualization(
     name: str,
     initial_gaussian_cloud_parameters,
     deformation_network: DeformationNetwork,
-    small_positional_encoding: PositionalEncoding,
-    encoded_normalized_initial_means: torch.Tensor,
-    encoded_normalized_initial_rotations: torch.Tensor,
+    normalized_initial_means: torch.Tensor,
+    normalized_initial_rotations: torch.Tensor,
     aspect_ratio: float,
     extrinsic_matrix: np.array,
     visualizations_directory_path: Path,
@@ -483,9 +500,8 @@ def export_visualization(
             timestep_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-                encoded_normalized_initial_means=encoded_normalized_initial_means,
-                encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-                small_positional_encoding=small_positional_encoding,
+                normalized_initial_means=normalized_initial_means,
+                normalized_initial_rotations=normalized_initial_rotations,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
@@ -548,10 +564,9 @@ def export_visualizations(
     visualizations_directory_path.mkdir(parents=True, exist_ok=True)
 
     (
-        encoded_normalized_initial_means,
-        encoded_normalized_initial_rotations,
-        small_positional_encoding,
-    ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
+        normalized_initial_means,
+        normalized_initial_rotations,
+    ) = normalize_means_and_rotations(initial_gaussian_cloud_parameters)
 
     distance_to_center: float = 2.4
     height: float = 1.3
@@ -598,9 +613,8 @@ def export_visualizations(
             name=name,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             deformation_network=deformation_network,
-            small_positional_encoding=small_positional_encoding,
-            encoded_normalized_initial_means=encoded_normalized_initial_means,
-            encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
+            normalized_initial_means=normalized_initial_means,
+            normalized_initial_rotations=normalized_initial_rotations,
             aspect_ratio=aspect_ratio,
             extrinsic_matrix=extrinsic_matrix,
             visualizations_directory_path=visualizations_directory_path,
@@ -626,7 +640,7 @@ def train(config: Config):
     )
     deformation_network = DeformationNetwork(
         hidden_dimension=config.hidden_dimension,
-        residual_block_count=config.residual_block_count,
+        hidden_layer_count=config.hidden_layer_count,
     ).cuda()
     optimizer = torch.optim.Adam(
         params=deformation_network.parameters(), lr=config.learning_rate
@@ -646,10 +660,9 @@ def train(config: Config):
         gaussian_cloud_parameters=initial_gaussian_cloud_parameters
     )
     (
-        encoded_normalized_initial_means,
-        encoded_normalized_initial_rotations,
-        small_positional_encoding,
-    ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
+        normalized_initial_means,
+        normalized_initial_rotations,
+    ) = normalize_means_and_rotations(initial_gaussian_cloud_parameters)
     views = load_all_views(
         dataset_metadata=dataset_metadata,
         timestep_count=timestep_count,
@@ -668,9 +681,8 @@ def train(config: Config):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            encoded_normalized_initial_means=encoded_normalized_initial_means,
-            encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-            small_positional_encoding=small_positional_encoding,
+            normalized_initial_means=normalized_initial_means,
+            normalized_initial_rotations=normalized_initial_rotations,
             timestep=timestep,
             timestep_count=timestep_count,
         )
@@ -728,9 +740,8 @@ def train(config: Config):
             updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-                encoded_normalized_initial_means=encoded_normalized_initial_means,
-                encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-                small_positional_encoding=small_positional_encoding,
+                normalized_initial_means=normalized_initial_means,
+                normalized_initial_rotations=normalized_initial_rotations,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
@@ -763,7 +774,7 @@ def train(config: Config):
             data_directory_path=config.data_directory_path,
             deformation_network=deformation_network,
             timestep_count=timestep_count,
-            residual_block_count=config.residual_block_count,
+            hidden_layer_count=config.hidden_layer_count,
             hidden_dimension=config.hidden_dimension,
         )
         export_visualizations(
@@ -792,7 +803,7 @@ def main():
         "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
     argument_parser.add_argument("-hd", "--hidden-dimension", type=int, default=128)
-    argument_parser.add_argument("-r", "--residual-block-count", type=int, default=6)
+    argument_parser.add_argument("-hl", "--hidden-layer-count", type=int, default=3)
     argument_parser.add_argument("-lr", "--learning-rate", type=float, default=0.01)
     argument_parser.add_argument("-fps", type=int, default=30)
     args = argument_parser.parse_args()
@@ -800,7 +811,7 @@ def main():
         sequence_name=args.sequence_name,
         data_directory_path=args.data_directory_path,
         hidden_dimension=args.hidden_dimension,
-        residual_block_count=args.residual_block_count,
+        hidden_layer_count=args.hidden_layer_count,
         learning_rate=args.learning_rate,
         timestep_count_limit=args.timestep_count_limit,
         output_directory_path=args.output_directory_path,
