@@ -91,7 +91,9 @@ class DeformationNetwork(nn.Module):
         progress_dimension = 1
         layers = [
             SineLayer(
-                mean_dimension + rotation_dimension + progress_dimension,
+                10 * 2 * mean_dimension
+                + 4 * 2 * rotation_dimension
+                + 4 * 2 * progress_dimension,
                 hidden_dimension,
                 is_first=True,
                 omega_0=first_omega_0,
