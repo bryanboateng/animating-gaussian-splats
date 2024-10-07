@@ -119,25 +119,23 @@ class DeformationNetwork(nn.Module):
         self,
         initial_means: torch.Tensor,
         initial_rotations: torch.Tensor,
-        normalized_initial_means: torch.Tensor,
-        normalized_initial_rotations: torch.Tensor,
-        progress: float,
+        encoded_normalized_initial_means: torch.Tensor,
+        encoded_normalized_initial_rotations: torch.Tensor,
+        encoded_progress: torch.Tensor,
     ):
         out = self.layers(
             torch.cat(
                 (
                     (
                         torch.cat(
-                            (normalized_initial_means, normalized_initial_rotations),
+                            (
+                                encoded_normalized_initial_means,
+                                encoded_normalized_initial_rotations,
+                            ),
                             dim=1,
                         )
                     ),
-                    (
-                        torch.tensor(progress)
-                        .view(1, 1)
-                        .repeat(normalized_initial_means.shape[0], 1)
-                        .cuda()
-                    ),
+                    encoded_progress,
                 ),
                 dim=1,
             )
@@ -148,6 +146,21 @@ class DeformationNetwork(nn.Module):
         )
 
         return out
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, L):
+        super(PositionalEncoding, self).__init__()
+        self.L = L
+        self.consts = ((torch.ones(L) * 2).pow(torch.arange(L)) * torch.pi).cuda()
+
+    def forward(self, x):
+        x = x[:, :, None]
+        A = (self.consts * x).repeat_interleave(2, 2)
+        A[:, :, ::2] = torch.sin(A[:, :, ::2])
+        A[:, :, 1::2] = torch.cos(A[:, :, ::2])
+
+        return A.permute(0, 2, 1).flatten(start_dim=1)
 
 
 def get_timestep_count(dataset_metadata, timestep_count_limit: int):
@@ -206,7 +219,7 @@ def initialize_variables(gaussian_cloud_parameters: dict[str, torch.nn.Parameter
     return neighbor_info, previous_timestep_foreground_info
 
 
-def normalize_means_and_rotations(
+def normalize_and_encode_means_and_rotations(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
 ):
     means = gaussian_cloud_parameters["means"]
@@ -219,7 +232,10 @@ def normalize_means_and_rotations(
     normalized_rotations = (
         2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
     ) - 1.0
-    return normalized_means, normalized_rotations
+    return (
+        PositionalEncoding(L=10)(normalized_means),
+        PositionalEncoding(L=4)(normalized_rotations),
+    )
 
 
 def load_all_views(dataset_metadata, timestep_count: int, sequence_path: Path):
@@ -272,17 +288,23 @@ def update_previous_timestep_foreground_info(
 def update_gaussian_cloud_parameters(
     deformation_network: DeformationNetwork,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-    normalized_initial_means,
-    normalized_initial_rotations,
+    encoded_normalized_initial_means,
+    encoded_normalized_initial_rotations,
     timestep,
     timestep_count,
 ):
+    encoded_progress = PositionalEncoding(L=4)(
+        torch.tensor(timestep / (timestep_count - 1))
+        .view(1, 1)
+        .repeat(encoded_normalized_initial_means.shape[0], 1)
+        .cuda()
+    )
     delta = deformation_network(
         initial_means=initial_gaussian_cloud_parameters["means"],
         initial_rotations=initial_gaussian_cloud_parameters["rotation_quaternions"],
-        normalized_initial_means=normalized_initial_means,
-        normalized_initial_rotations=normalized_initial_rotations,
-        progress=timestep / (timestep_count - 1),
+        encoded_normalized_initial_means=encoded_normalized_initial_means,
+        encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
+        encoded_progress=encoded_progress,
     )
     means_delta = delta[:, :3]
     rotations_delta = delta[:, 3:]
@@ -481,8 +503,8 @@ def export_visualization(
     name: str,
     initial_gaussian_cloud_parameters,
     deformation_network: DeformationNetwork,
-    normalized_initial_means: torch.Tensor,
-    normalized_initial_rotations: torch.Tensor,
+    encoded_normalized_initial_means: torch.Tensor,
+    encoded_normalized_initial_rotations: torch.Tensor,
     aspect_ratio: float,
     extrinsic_matrix: np.array,
     visualizations_directory_path: Path,
@@ -499,8 +521,8 @@ def export_visualization(
             timestep_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-                normalized_initial_means=normalized_initial_means,
-                normalized_initial_rotations=normalized_initial_rotations,
+                encoded_normalized_initial_means=encoded_normalized_initial_means,
+                encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
@@ -563,9 +585,9 @@ def export_visualizations(
     visualizations_directory_path.mkdir(parents=True, exist_ok=True)
 
     (
-        normalized_initial_means,
-        normalized_initial_rotations,
-    ) = normalize_means_and_rotations(initial_gaussian_cloud_parameters)
+        encoded_normalized_initial_means,
+        encoded_normalized_initial_rotations,
+    ) = normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
 
     distance_to_center: float = 2.4
     height: float = 1.3
@@ -612,8 +634,8 @@ def export_visualizations(
             name=name,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             deformation_network=deformation_network,
-            normalized_initial_means=normalized_initial_means,
-            normalized_initial_rotations=normalized_initial_rotations,
+            encoded_normalized_initial_means=encoded_normalized_initial_means,
+            encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
             aspect_ratio=aspect_ratio,
             extrinsic_matrix=extrinsic_matrix,
             visualizations_directory_path=visualizations_directory_path,
@@ -654,9 +676,9 @@ def train(config: Config):
         gaussian_cloud_parameters=initial_gaussian_cloud_parameters
     )
     (
-        normalized_initial_means,
-        normalized_initial_rotations,
-    ) = normalize_means_and_rotations(initial_gaussian_cloud_parameters)
+        encoded_normalized_initial_means,
+        encoded_normalized_initial_rotations,
+    ) = normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
     views = load_all_views(
         dataset_metadata=dataset_metadata,
         timestep_count=timestep_count,
@@ -675,8 +697,8 @@ def train(config: Config):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            normalized_initial_means=normalized_initial_means,
-            normalized_initial_rotations=normalized_initial_rotations,
+            encoded_normalized_initial_means=encoded_normalized_initial_means,
+            encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
             timestep=timestep,
             timestep_count=timestep_count,
         )
@@ -733,8 +755,8 @@ def train(config: Config):
             updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-                normalized_initial_means=normalized_initial_means,
-                normalized_initial_rotations=normalized_initial_rotations,
+                encoded_normalized_initial_means=encoded_normalized_initial_means,
+                encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
