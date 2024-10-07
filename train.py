@@ -36,7 +36,8 @@ class Config:
     learning_rate: float
     timestep_count_limit: Optional[int]
     output_directory_path: Path
-    iteration_count: int
+    total_iteration_count: int
+    warmup_iteration_count: int
     fps: int
 
 
@@ -666,6 +667,11 @@ def train(config: Config):
     optimizer = torch.optim.Adam(
         params=deformation_network.parameters(), lr=config.learning_rate
     )
+    scheduler = get_linear_warmup_cos_annealing(
+        optimizer,
+        warmup_iters=config.warmup_iteration_count,
+        total_iters=config.total_iteration_count,
+    )
 
     initial_gaussian_cloud_parameters = load_densified_initial_parameters(
         data_directory_path=config.data_directory_path,
@@ -684,7 +690,7 @@ def train(config: Config):
         timestep_count=timestep_count,
         sequence_path=config.data_directory_path / config.sequence_name,
     )
-    for i in tqdm(range(config.iteration_count), desc="Training"):
+    for i in tqdm(range(config.total_iteration_count), desc="Training"):
         timestep = (i % (timestep_count - 1)) + 1
 
         if timestep == 1:
@@ -704,7 +710,7 @@ def train(config: Config):
         )
 
         rigidity_loss_weight = (
-            2.0 / (1.0 + math.exp(-6 * (i / config.iteration_count))) - 1
+            2.0 / (1.0 + math.exp(-6 * (i / config.total_iteration_count))) - 1
         )
         loss = calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
@@ -746,6 +752,7 @@ def train(config: Config):
         )
 
         optimizer.step()
+        scheduler.step()
         optimizer.zero_grad()
     for timestep in tqdm(
         range(1, timestep_count), desc="Calculate Mean Image Loss per Timestep"
@@ -777,7 +784,7 @@ def train(config: Config):
                 )
         wandb.log(
             {"mean-image-loss": sum(image_losses) / len(image_losses)},
-            step=config.iteration_count + timestep,
+            step=config.total_iteration_count + timestep,
         )
     with torch.no_grad():
         run_output_directory_path = (
@@ -808,7 +815,12 @@ def main():
         "data_directory_path", metavar="data-directory-path", type=Path
     )
     argument_parser.add_argument("-t", "--timestep-count-limit", type=int)
-    argument_parser.add_argument("-i", "--iteration-count", type=int, default=200_000)
+    argument_parser.add_argument(
+        "-ti", "--total-iteration-count", type=int, default=200_000
+    )
+    argument_parser.add_argument(
+        "-wi", "--warmup-iteration-count", type=int, default=15_000
+    )
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
     )
@@ -825,7 +837,8 @@ def main():
         learning_rate=args.learning_rate,
         timestep_count_limit=args.timestep_count_limit,
         output_directory_path=args.output_directory_path,
-        iteration_count=args.iteration_count,
+        total_iteration_count=args.total_iteration_count,
+        warmup_iteration_count=args.warmup_iteration_count,
         fps=args.fps,
     )
     train(config=config)
