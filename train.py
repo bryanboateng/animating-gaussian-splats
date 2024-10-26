@@ -217,15 +217,15 @@ def calculate_l1_and_ssim_loss(gaussian_cloud_parameters, target_view: View):
 def calculate_timestep_loss(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter], target_views: list[View]
 ):
-    l1_loss_sum = torch.tensor(0)
-    ssim_loss_sum = torch.tensor(0)
+    l1_losses = []
+    ssim_losses = []
     for target_view in target_views:
         l1_loss, ssim_loss = calculate_l1_and_ssim_loss(
             gaussian_cloud_parameters, target_view
         )
-        l1_loss_sum += l1_loss
-        ssim_loss_sum += ssim_loss
-    return l1_loss_sum, ssim_loss_sum
+        l1_losses.append(l1_loss)
+        ssim_losses.append(ssim_loss)
+    return torch.stack(l1_losses).sum(), torch.stack(ssim_losses).sum()
 
 
 def combine_l1_and_ssim_loss(l1_loss: torch.Tensor, ssim_loss: torch.tensor):
@@ -241,8 +241,8 @@ def calculate_loss(
     views: list[list[View]],
     i: int,
 ):
-    l1_loss_sum = torch.tensor(0)
-    ssim_loss_sum = torch.tensor(0)
+    l1_losses = []
+    ssim_losses = []
 
     for timestep in range(1, timestep_count):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
@@ -257,16 +257,20 @@ def calculate_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_views=random.sample(views[timestep - 1], 5),
         )
-        l1_loss_sum += l1_loss
-        ssim_loss_sum += ssim_loss
+        l1_losses.append(l1_loss)
+        ssim_losses.append(ssim_loss)
 
-    image_loss = combine_l1_and_ssim_loss(l1_loss=l1_loss_sum, ssim_loss=ssim_loss_sum)
+    total_l1_loss = torch.stack(l1_losses).sum()
+    total_ssim_loss = torch.stack(ssim_losses).sum()
+    image_loss = combine_l1_and_ssim_loss(
+        l1_loss=total_l1_loss, ssim_loss=total_ssim_loss
+    )
     total_loss = image_loss
     wandb.log(
         {
             "train-loss/total": total_loss.item(),
-            "train-loss/l1": l1_loss_sum.item(),
-            "train-loss/ssim": ssim_loss_sum.item(),
+            "train-loss/l1": total_l1_loss.item(),
+            "train-loss/ssim": total_ssim_loss.item(),
             "train-loss/image": image_loss.item(),
         },
         step=i,
