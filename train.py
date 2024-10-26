@@ -272,6 +272,10 @@ def calculate_loss(
             "train-loss/l1": total_l1_loss.item(),
             "train-loss/ssim": total_ssim_loss.item(),
             "train-loss/image": image_loss.item(),
+            "train-loss-average/total": total_loss.item() / timestep_count - 1,
+            "train-loss-average/l1": total_l1_loss.item() / timestep_count - 1,
+            "train-loss-average/ssim": total_ssim_loss.item() / timestep_count - 1,
+            "train-loss-average/image": image_loss.item() / timestep_count - 1,
         },
         step=i,
     )
