@@ -101,19 +101,96 @@ class PositionalEncoding(nn.Module):
         return A.permute(0, 2, 1).flatten(start_dim=1)
 
 
-def calculate_gradient_norm(deformation_network):
-    total_norm = torch.sqrt(
-        torch.sum(
-            torch.tensor(
-                [
-                    parameter.grad.norm(2).pow(2)
-                    for parameter in deformation_network.parameters()
-                    if parameter.grad is not None
-                ]
-            )
-        )
+def get_timestep_count(dataset_metadata, timestep_count_limit: int):
+    sequence_length = len(dataset_metadata["fn"])
+    if timestep_count_limit is None:
+        return sequence_length
+    else:
+        return min(sequence_length, timestep_count_limit)
+
+
+def load_densified_initial_parameters(
+    data_directory_path: pathlib.Path, sequence_name: str
+):
+    parameters: dict[str, torch.nn.Parameter] = torch.load(
+        data_directory_path
+        / sequence_name
+        / "densified_initial_gaussian_cloud_parameters.pth"
     )
-    return total_norm
+    for parameter in parameters.values():
+        parameter.requires_grad = False
+    return parameters
+
+
+def encode_means_and_rotations(
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
+):
+    means = gaussian_cloud_parameters["means"]
+    rotations = gaussian_cloud_parameters["rotation_quaternions"]
+    normalized_means = means - means.min(dim=0).values
+    normalized_means = (
+        2.0 * normalized_means / normalized_means.max(dim=0).values
+    ) - 1.0
+    normalized_rotations = rotations - rotations.min(dim=0).values
+    normalized_rotations = (
+        2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
+    ) - 1.0
+    encoded_normalized_means = PositionalEncoding(L=10)(normalized_means)
+    encoded_normalized_rotations = PositionalEncoding(L=4)(normalized_rotations)
+    return (
+        encoded_normalized_means,
+        encoded_normalized_rotations,
+    )
+
+
+def load_all_views(dataset_metadata, timestep_count: int, sequence_path: pathlib.Path):
+    views = []
+    for timestep in range(1, timestep_count):
+        views += [
+            load_timestep_views(
+                dataset_metadata=dataset_metadata,
+                timestep=timestep,
+                sequence_path=sequence_path,
+            )
+        ]
+    return views
+
+
+def update_gaussian_cloud_parameters(
+    deformation_network: DeformationNetwork,
+    initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    encoded_normalized_initial_means,
+    encoded_normalized_initial_rotations,
+    timestep,
+    timestep_count,
+):
+    encoded_progress = PositionalEncoding(L=4)(
+        torch.tensor(timestep / (timestep_count - 1))
+        .view(1, 1)
+        .repeat(encoded_normalized_initial_means.shape[0], 1)
+        .cuda()
+    )
+    delta = deformation_network(
+        initial_means=initial_gaussian_cloud_parameters["means"],
+        initial_rotations=initial_gaussian_cloud_parameters["rotation_quaternions"],
+        encoded_normalized_initial_means=encoded_normalized_initial_means,
+        encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
+        encoded_progress=encoded_progress,
+    )
+    means_delta = delta[:, :3]
+    rotations_delta = delta[:, 3:]
+    updated_gaussian_cloud_parameters: dict[str, torch.nn.Parameter] = copy.deepcopy(
+        initial_gaussian_cloud_parameters
+    )
+    updated_gaussian_cloud_parameters["means"] = updated_gaussian_cloud_parameters[
+        "means"
+    ].detach()
+    updated_gaussian_cloud_parameters["means"] += means_delta * 0.01
+    updated_gaussian_cloud_parameters["rotation_quaternions"] = (
+        updated_gaussian_cloud_parameters["rotation_quaternions"].detach()
+    )
+    updated_gaussian_cloud_parameters["rotation_quaternions"] += rotations_delta * 0.01
+    return updated_gaussian_cloud_parameters
 
 
 def calculate_l1_and_ssim_loss(gaussian_cloud_parameters, target_view: View):
@@ -129,10 +206,6 @@ def calculate_l1_and_ssim_loss(gaussian_cloud_parameters, target_view: View):
     return l1_loss, ssim_loss
 
 
-def combine_l1_and_ssim_loss(l1_loss: torch.Tensor, ssim_loss: torch.tensor):
-    return 0.8 * l1_loss + 0.2 * ssim_loss
-
-
 def calculate_timestep_loss(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter], target_views: list[View]
 ):
@@ -145,6 +218,10 @@ def calculate_timestep_loss(
         l1_loss_sum += l1_loss
         ssim_loss_sum += ssim_loss
     return l1_loss_sum, ssim_loss_sum
+
+
+def combine_l1_and_ssim_loss(l1_loss: torch.Tensor, ssim_loss: torch.tensor):
+    return 0.8 * l1_loss + 0.2 * ssim_loss
 
 
 def calculate_loss(
@@ -189,95 +266,17 @@ def calculate_loss(
     return total_loss
 
 
-def update_gaussian_cloud_parameters(
-    deformation_network: DeformationNetwork,
-    initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-    encoded_normalized_initial_means,
-    encoded_normalized_initial_rotations,
-    timestep,
-    timestep_count,
-):
-    encoded_progress = PositionalEncoding(L=4)(
-        torch.tensor(timestep / (timestep_count - 1))
-        .view(1, 1)
-        .repeat(encoded_normalized_initial_means.shape[0], 1)
-        .cuda()
-    )
-    delta = deformation_network(
-        initial_means=initial_gaussian_cloud_parameters["means"],
-        initial_rotations=initial_gaussian_cloud_parameters["rotation_quaternions"],
-        encoded_normalized_initial_means=encoded_normalized_initial_means,
-        encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-        encoded_progress=encoded_progress,
-    )
-    means_delta = delta[:, :3]
-    rotations_delta = delta[:, 3:]
-    updated_gaussian_cloud_parameters: dict[str, torch.nn.Parameter] = copy.deepcopy(
-        initial_gaussian_cloud_parameters
-    )
-    updated_gaussian_cloud_parameters["means"] = updated_gaussian_cloud_parameters[
-        "means"
-    ].detach()
-    updated_gaussian_cloud_parameters["means"] += means_delta * 0.01
-    updated_gaussian_cloud_parameters["rotation_quaternions"] = (
-        updated_gaussian_cloud_parameters["rotation_quaternions"].detach()
-    )
-    updated_gaussian_cloud_parameters["rotation_quaternions"] += rotations_delta * 0.01
-    return updated_gaussian_cloud_parameters
-
-
-def load_all_views(dataset_metadata, timestep_count: int, sequence_path: pathlib.Path):
-    views = []
-    for timestep in range(1, timestep_count):
-        views += [
-            load_timestep_views(
-                dataset_metadata=dataset_metadata,
-                timestep=timestep,
-                sequence_path=sequence_path,
+def calculate_gradient_norm(deformation_network: DeformationNetwork):
+    return torch.sqrt(
+        torch.sum(
+            torch.tensor(
+                [
+                    parameter.grad.norm(2).pow(2)
+                    for parameter in deformation_network.parameters()
+                    if parameter.grad is not None
+                ]
             )
-        ]
-    return views
-
-
-def get_timestep_count(dataset_metadata, timestep_count_limit: int):
-    sequence_length = len(dataset_metadata["fn"])
-    if timestep_count_limit is None:
-        return sequence_length
-    else:
-        return min(sequence_length, timestep_count_limit)
-
-
-def load_densified_initial_parameters(
-    data_directory_path: pathlib.Path, sequence_name: str
-):
-    parameters: dict[str, torch.nn.Parameter] = torch.load(
-        data_directory_path
-        / sequence_name
-        / "densified_initial_gaussian_cloud_parameters.pth"
-    )
-    for parameter in parameters.values():
-        parameter.requires_grad = False
-    return parameters
-
-
-def encode_means_and_rotations(
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
-):
-    means = gaussian_cloud_parameters["means"]
-    rotations = gaussian_cloud_parameters["rotation_quaternions"]
-    normalized_means = means - means.min(dim=0).values
-    normalized_means = (
-        2.0 * normalized_means / normalized_means.max(dim=0).values
-    ) - 1.0
-    normalized_rotations = rotations - rotations.min(dim=0).values
-    normalized_rotations = (
-        2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
-    ) - 1.0
-    encoded_normalized_means = PositionalEncoding(L=10)(normalized_means)
-    encoded_normalized_rotations = PositionalEncoding(L=4)(normalized_rotations)
-    return (
-        encoded_normalized_means,
-        encoded_normalized_rotations,
+        )
     )
 
 
