@@ -13,7 +13,6 @@ import torch
 import wandb
 from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 from tqdm import tqdm
 
 from external import calc_ssim
@@ -233,16 +232,19 @@ def combine_l1_and_ssim_loss(l1_loss: torch.Tensor, ssim_loss: torch.tensor):
     return 0.8 * l1_loss + 0.2 * ssim_loss
 
 
-def forward_timestep(
+def calculate_loss(
     deformation_network: DeformationNetwork,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     encoded_normalized_initial_means,
     encoded_normalized_initial_rotations,
-    timestep,
     timestep_count,
     views: list[list[View]],
+    i: int,
 ):
-    def custom_forward():
+    l1_losses = []
+    ssim_losses = []
+
+    for timestep in tqdm(range(1, timestep_count), unit="timesteps", leave=False):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
@@ -255,42 +257,24 @@ def forward_timestep(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_views=random.sample(views[timestep - 1], 5),
         )
-        image_loss = combine_l1_and_ssim_loss(l1_loss=l1_loss, ssim_loss=ssim_loss)
-        return image_loss
+        l1_losses.append(l1_loss)
+        ssim_losses.append(ssim_loss)
 
-    return checkpoint(custom_forward)
-
-
-def calculate_loss(
-    deformation_network: DeformationNetwork,
-    initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-    encoded_normalized_initial_means,
-    encoded_normalized_initial_rotations,
-    timestep_count,
-    views: list[list[View]],
-    i: int,
-):
-    image_losses = []
-
-    for timestep in tqdm(range(1, timestep_count), unit="timesteps", leave=False):
-        image_loss = forward_timestep(
-            deformation_network=deformation_network,
-            initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-            encoded_normalized_initial_means=encoded_normalized_initial_means,
-            encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-            timestep=timestep,
-            timestep_count=timestep_count,
-            views=views,
-        )
-        image_losses.append(image_loss)
-
-    image_loss = torch.stack(image_losses).sum()
+    total_l1_loss = torch.stack(l1_losses).sum()
+    total_ssim_loss = torch.stack(ssim_losses).sum()
+    image_loss = combine_l1_and_ssim_loss(
+        l1_loss=total_l1_loss, ssim_loss=total_ssim_loss
+    )
     total_loss = image_loss
     wandb.log(
         {
             "train-loss/total": total_loss.item(),
+            "train-loss/l1": total_l1_loss.item(),
+            "train-loss/ssim": total_ssim_loss.item(),
             "train-loss/image": image_loss.item(),
             "train-loss-mean/total": total_loss.item() / timestep_count - 1,
+            "train-loss-mean/l1": total_l1_loss.item() / timestep_count - 1,
+            "train-loss-mean/ssim": total_ssim_loss.item() / timestep_count - 1,
             "train-loss-mean/image": image_loss.item() / timestep_count - 1,
         },
         step=i,
