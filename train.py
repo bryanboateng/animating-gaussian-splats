@@ -244,7 +244,7 @@ def calculate_loss(
     l1_losses = []
     ssim_losses = []
 
-    for timestep in range(1, timestep_count):
+    for timestep in tqdm(range(1, timestep_count), unit="timestep"):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
