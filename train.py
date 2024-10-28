@@ -15,11 +15,12 @@ from diff_gaussian_rasterization import GaussianRasterizer as Renderer
 from torch import nn
 from tqdm import tqdm
 
-from external import calc_ssim
+from external import calc_ssim, build_rotation
 from shared import (
+    compute_knn_indices_and_squared_distances,
+    load_timestep_views,
     View,
     create_render_arguments,
-    load_timestep_views,
     create_render_settings,
 )
 
@@ -35,6 +36,18 @@ class Config:
     output_directory_path: pathlib.Path
     iteration_count: int
     fps: int
+
+
+@dataclass
+class NeighborInfo:
+    weights: torch.Tensor
+    indices: torch.Tensor
+
+
+@dataclass
+class ForegroundInfo:
+    inverted_rotations: typing.Optional[torch.Tensor] = None
+    offsets_to_neighbors: typing.Optional[torch.Tensor] = None
 
 
 class ResidualBlock(nn.Module):
@@ -130,6 +143,25 @@ def load_densified_initial_parameters(
     return parameters
 
 
+def create_neighbor_info(gaussian_cloud_parameters: dict[str, torch.nn.Parameter]):
+    foreground_mask = gaussian_cloud_parameters["segmentation_masks"][:, 0] > 0.5
+    foreground_means = gaussian_cloud_parameters["means"][foreground_mask]
+    neighbor_indices_list, neighbor_squared_distances_list = (
+        compute_knn_indices_and_squared_distances(
+            foreground_means.detach().cpu().numpy(), 20
+        )
+    )
+    return NeighborInfo(
+        indices=(torch.tensor(neighbor_indices_list).cuda().long().contiguous()),
+        weights=(
+            torch.tensor(np.exp(-2000 * neighbor_squared_distances_list))
+            .cuda()
+            .float()
+            .contiguous()
+        ),
+    )
+
+
 def encode_means_and_rotations(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
 ):
@@ -201,6 +233,49 @@ def update_gaussian_cloud_parameters(
     return updated_gaussian_cloud_parameters
 
 
+def quat_mult(q1, q2):
+    w1, x1, y1, z1 = q1.T
+    w2, x2, y2, z2 = q2.T
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+    return torch.stack([w, x, y, z]).T
+
+
+def weighted_l2_loss_v2(x, y, w):
+    return torch.sqrt(((x - y) ** 2).sum(-1) * w + 1e-20).mean()
+
+
+def calculate_rigidity_loss(
+    gaussian_cloud_parameters, initial_neighbor_info, previous_timestep_foreground_info
+):
+    foreground_mask = (
+        gaussian_cloud_parameters["segmentation_masks"][:, 0] > 0.5
+    ).detach()
+    render_arguments = create_render_arguments(gaussian_cloud_parameters)
+    foreground_means = render_arguments["means3D"][foreground_mask]
+    foreground_rotations = render_arguments["rotations"][foreground_mask]
+    foreground_rotations_from_previous_timestep_to_current = build_rotation(
+        quat_mult(
+            foreground_rotations, previous_timestep_foreground_info.inverted_rotations
+        )
+    )
+    foreground_neighbor_means = foreground_means[initial_neighbor_info.indices]
+    foreground_offset_to_neighbors = (
+        foreground_neighbor_means - foreground_means[:, None]
+    )
+    foreground_offset_to_neighbors_in_previous_timestep_coordinates = (
+        foreground_rotations_from_previous_timestep_to_current.transpose(2, 1)[:, None]
+        @ foreground_offset_to_neighbors[:, :, :, None]
+    ).squeeze(-1)
+    return weighted_l2_loss_v2(
+        foreground_offset_to_neighbors_in_previous_timestep_coordinates,
+        previous_timestep_foreground_info.offsets_to_neighbors,
+        initial_neighbor_info.weights,
+    )
+
+
 def calculate_l1_and_ssim_loss(gaussian_cloud_parameters, target_view: View):
     (
         rendered_image,
@@ -215,7 +290,10 @@ def calculate_l1_and_ssim_loss(gaussian_cloud_parameters, target_view: View):
 
 
 def calculate_timestep_loss(
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter], target_views: list[View]
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    target_views: list[View],
+    initial_neighbor_info: NeighborInfo,
+    previous_timestep_foreground_info: ForegroundInfo,
 ):
     l1_losses = []
     ssim_losses = []
@@ -225,7 +303,51 @@ def calculate_timestep_loss(
         )
         l1_losses.append(l1_loss)
         ssim_losses.append(ssim_loss)
-    return torch.stack(l1_losses).sum(), torch.stack(ssim_losses).sum()
+
+    rigidity_loss = calculate_rigidity_loss(
+        gaussian_cloud_parameters=gaussian_cloud_parameters,
+        initial_neighbor_info=initial_neighbor_info,
+        previous_timestep_foreground_info=previous_timestep_foreground_info,
+    )
+    return (
+        torch.stack(l1_losses).sum(),
+        torch.stack(ssim_losses).sum(),
+        rigidity_loss * len(target_views),
+    )
+
+
+def get_inverted_foreground_rotations(
+    rotations: torch.Tensor, foreground_mask: torch.Tensor
+):
+    foreground_rotations = rotations[foreground_mask]
+    foreground_rotations[:, 1:] = -1 * foreground_rotations[:, 1:]
+    return foreground_rotations
+
+
+def update_previous_timestep_foreground_info(
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    previous_timestep_foreground_info: ForegroundInfo,
+    initial_neighbor_indices: torch.Tensor,
+):
+    current_means = gaussian_cloud_parameters["means"]
+    current_rotations = torch.nn.functional.normalize(
+        gaussian_cloud_parameters["rotation_quaternions"]
+    )
+
+    foreground_mask = gaussian_cloud_parameters["segmentation_masks"][:, 0] > 0.5
+    inverted_foreground_rotations = get_inverted_foreground_rotations(
+        current_rotations, foreground_mask
+    )
+    foreground_means = current_means[foreground_mask]
+    offsets_to_foreground_neighbors = (
+        foreground_means[initial_neighbor_indices] - foreground_means[:, None]
+    )
+    previous_timestep_foreground_info.inverted_rotations = (
+        inverted_foreground_rotations.detach().clone()
+    )
+    previous_timestep_foreground_info.offsets_to_neighbors = (
+        offsets_to_foreground_neighbors.detach().clone()
+    )
 
 
 def combine_l1_and_ssim_loss(l1_loss: torch.Tensor, ssim_loss: torch.tensor):
@@ -237,12 +359,21 @@ def calculate_loss(
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     encoded_normalized_initial_means,
     encoded_normalized_initial_rotations,
+    initial_neighbor_info: NeighborInfo,
     timestep_count,
     views: list[list[View]],
     i: int,
 ):
     l1_losses = []
     ssim_losses = []
+    rigidity_losses = []
+
+    previous_timestep_foreground_info = ForegroundInfo()
+    update_previous_timestep_foreground_info(
+        gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+        previous_timestep_foreground_info=previous_timestep_foreground_info,
+        initial_neighbor_indices=initial_neighbor_info.indices,
+    )
 
     for timestep in tqdm(range(1, timestep_count), unit="timesteps", leave=False):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
@@ -253,29 +384,42 @@ def calculate_loss(
             timestep=timestep,
             timestep_count=timestep_count,
         )
-        l1_loss, ssim_loss = calculate_timestep_loss(
+
+        l1_loss, ssim_loss, rigidity_loss = calculate_timestep_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_views=random.sample(views[timestep - 1], 5),
+            initial_neighbor_info=initial_neighbor_info,
+            previous_timestep_foreground_info=previous_timestep_foreground_info,
         )
         l1_losses.append(l1_loss)
         ssim_losses.append(ssim_loss)
+        rigidity_losses.append(rigidity_loss)
+        update_previous_timestep_foreground_info(
+            gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+            previous_timestep_foreground_info=previous_timestep_foreground_info,
+            initial_neighbor_indices=initial_neighbor_info.indices,
+        )
 
     total_l1_loss = torch.stack(l1_losses).sum()
     total_ssim_loss = torch.stack(ssim_losses).sum()
-    image_loss = combine_l1_and_ssim_loss(
+    total_rigidity_loss = torch.stack(rigidity_losses).sum()
+    total_image_loss = combine_l1_and_ssim_loss(
         l1_loss=total_l1_loss, ssim_loss=total_ssim_loss
     )
-    total_loss = image_loss
+    total_loss = total_image_loss + 2.5 * total_rigidity_loss
     wandb.log(
         {
             "train-loss/total": total_loss.item(),
             "train-loss/l1": total_l1_loss.item(),
             "train-loss/ssim": total_ssim_loss.item(),
-            "train-loss/image": image_loss.item(),
+            "train-loss/image": total_image_loss.item(),
+            "train-loss/rigidity": total_rigidity_loss.item(),
             "train-loss-mean/total": total_loss.item() / (timestep_count - 1),
             "train-loss-mean/l1": total_l1_loss.item() / (timestep_count - 1),
             "train-loss-mean/ssim": total_ssim_loss.item() / (timestep_count - 1),
-            "train-loss-mean/image": image_loss.item() / (timestep_count - 1),
+            "train-loss-mean/image": total_image_loss.item() / (timestep_count - 1),
+            "train-loss-mean/rigidity": total_rigidity_loss.item()
+            / (timestep_count - 1),
         },
         step=i,
     )
@@ -524,6 +668,9 @@ def train(config: Config):
         sequence_name=config.sequence_name,
     )
 
+    initial_neighbor_info = create_neighbor_info(
+        gaussian_cloud_parameters=initial_gaussian_cloud_parameters
+    )
     (
         encoded_normalized_initial_means,
         encoded_normalized_initial_rotations,
@@ -539,6 +686,7 @@ def train(config: Config):
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             encoded_normalized_initial_means=encoded_normalized_initial_means,
             encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
+            initial_neighbor_info=initial_neighbor_info,
             timestep_count=timestep_count,
             views=views,
             i=i,
