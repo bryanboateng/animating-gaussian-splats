@@ -384,7 +384,6 @@ def calculate_loss(
             timestep=timestep,
             timestep_count=timestep_count,
         )
-
         l1_loss, ssim_loss, rigidity_loss = calculate_timestep_loss(
             gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
             target_views=random.sample(views[timestep - 1], 5),
@@ -406,7 +405,7 @@ def calculate_loss(
     total_image_loss = combine_l1_and_ssim_loss(
         l1_loss=total_l1_loss, ssim_loss=total_ssim_loss
     )
-    total_loss = total_image_loss + 2.5 * total_rigidity_loss
+    total_loss = total_image_loss + 1.5 * total_rigidity_loss
     wandb.log(
         {
             "train-loss/total": total_loss.item(),
