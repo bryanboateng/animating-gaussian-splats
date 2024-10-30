@@ -79,7 +79,7 @@ class ResidualBlock(nn.Module):
 class DeformationNetwork(nn.Module):
     def __init__(self, hidden_dimension, residual_block_count) -> None:
         super(DeformationNetwork, self).__init__()
-        self.fc_in = nn.Linear(100, hidden_dimension)
+        self.fc_in = nn.Linear(192, hidden_dimension)
         self.residual_blocks = nn.Sequential(
             *(ResidualBlock(hidden_dimension) for _ in range(residual_block_count))
         )
