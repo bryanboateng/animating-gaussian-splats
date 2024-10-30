@@ -85,8 +85,12 @@ class DeformationNetwork(nn.Module):
         )
         self.fc_out = nn.Linear(hidden_dimension, 7)
 
-    def forward(self, input_, normalized_input, timestep):
-        out = torch.cat((normalized_input, timestep), dim=1)
+    def forward(
+        self, input_, normalized_initial_input, normalized_previous_input, timestep
+    ):
+        out = torch.cat(
+            (normalized_initial_input, normalized_previous_input, timestep), dim=1
+        )
         out = self.fc_in(out)
         out = self.residual_blocks(out)
         out = self.fc_out(out)
