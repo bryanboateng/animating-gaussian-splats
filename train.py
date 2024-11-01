@@ -445,7 +445,7 @@ def export_deformation_network(
     network_state_dict_path = network_directory_path / "state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
     wandb.save(
-        network_directory_path / "*",
+        network_directory_path / "**/*",
         base_path=network_directory_path.parent,
     )
 
@@ -593,7 +593,7 @@ def inference(
         )
 
     wandb.save(
-        visualizations_directory_path / "*",
+        visualizations_directory_path / "**/*",
         base_path=visualizations_directory_path.parent,
     )
 
