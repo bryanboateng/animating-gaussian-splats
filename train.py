@@ -586,7 +586,9 @@ def inference(
                 frames_directory=frames_directory_path,
             ),
         )
-        wandb.save(frames_directory_path / "*", base_path=frames_directory_path.parent)
+        wandb.save(
+            frames_directory_path / "*", base_path=frames_directory_path.parent.parent
+        )
         video_file_path = visualizations_directory_path / f"{name}.mp4"
         imageio.mimwrite(video_file_path, frames[name], fps=fps)
         wandb.log(
