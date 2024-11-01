@@ -806,54 +806,6 @@ def calculate_gradient_norm(deformation_network):
     )
 
 
-def compute_and_log_mean_image_loss(
-    initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-    timestep_count: int,
-    deformation_network: DeformationNetwork,
-    dataset_metadata,
-    sequence_path: Path,
-    total_iteration_count: int,
-):
-    encoded_normalized_initial_means_and_rotations = (
-        normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
-    )
-    encoded_normalized_previous_means_and_rotations = (
-        normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
-    )
-    for timestep in tqdm(range(1, timestep_count + 1), desc="Inference"):
-        image_losses = []
-        with torch.no_grad():
-            updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
-                deformation_network=deformation_network,
-                initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
-                encoded_normalized_initial_means_and_rotations=encoded_normalized_initial_means_and_rotations,
-                encoded_normalized_previous_means_and_rotations=encoded_normalized_previous_means_and_rotations,
-                timestep=timestep,
-                timestep_count=timestep_count,
-            )
-            timestep_views = load_timestep_views(
-                dataset_metadata, timestep, sequence_path
-            )
-            for view in timestep_views:
-                l1_loss, ssim_loss = calculate_l1_and_ssim_loss(
-                    gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
-                    target_view=view,
-                )
-                image_losses.append(
-                    combine_l1_and_ssim_loss(
-                        l1_loss=l1_loss, ssim_loss=ssim_loss
-                    ).item()
-                )
-
-            encoded_normalized_previous_means_and_rotations = (
-                normalize_and_encode_means_and_rotations(
-                    updated_gaussian_cloud_parameters
-                )
-            )
-        wandb.log(
-            {"mean-image-loss": sum(image_losses) / len(image_losses)},
-            step=total_iteration_count * timestep_count + timestep,
-        )
 
 
 def main():
