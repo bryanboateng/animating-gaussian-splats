@@ -765,8 +765,11 @@ def train(config: Config):
             run_output_directory_path=run_output_directory_path,
             fps=config.fps,
         )
-        with (run_output_directory_path / "config.json").open("w") as config_file:
-            json.dump(asdict(config), config_file, indent="\t")
+        config_dict = asdict(config)
+        config_dict["data_directory_path"] = str(config_dict["data_directory_path"])
+        config_dict["output_directory_path"] = str(config_dict["output_directory_path"])
+        with (config.output_directory_path / "config.json").open("w") as config_file:
+            json.dump(config_dict, config_file, indent="\t")
         export_deformation_network(
             run_output_directory_path=run_output_directory_path,
             sequence_name=config.sequence_name,
