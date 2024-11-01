@@ -591,6 +591,15 @@ def inference(
             frames[name],
             fps=fps,
         )
+        wandb.log( 
+            {
+                f"video/{name}": wandb.Video(
+                    data_or_path=str(visualizations_directory_path / f"{name}.mp4"),
+                    fps=fps,
+                    format="mp4",
+                )
+            }
+        )
 
     wandb.save(
         visualizations_directory_path / "*/**",
