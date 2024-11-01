@@ -378,7 +378,7 @@ def calculate_loss(
     initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
     rigidity_loss_weight,
-    i: int,
+    step: int,
 ):
     losses = torch.stack(
         [
@@ -405,7 +405,7 @@ def calculate_loss(
             "train-loss/image": image_loss.item(),
             "train-loss/rigidity": rigidity_loss_sum.item(),
         },
-        step=i,
+        step=step,
     )
     return total_loss
 
@@ -696,6 +696,7 @@ def train(config: Config):
             initial_neighbor_indices=initial_neighbor_info.indices,
         )
         for timestep in range(1, timestep_count + 1):
+            step = sequence_iteration * timestep_count + timestep
             updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
                 deformation_network=deformation_network,
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
@@ -710,13 +711,7 @@ def train(config: Config):
                 / (
                     1.0
                     + math.exp(
-                        -6
-                        * (
-                            sequence_iteration
-                            * timestep
-                            / config.total_iteration_count
-                            * timestep_count
-                        )
+                        -6 * (step / (config.total_iteration_count * timestep_count))
                     )
                 )
                 - 1
@@ -727,14 +722,14 @@ def train(config: Config):
                 initial_neighbor_info=initial_neighbor_info,
                 previous_timestep_foreground_info=previous_timestep_foreground_info,
                 rigidity_loss_weight=rigidity_loss_weight,
-                i=sequence_iteration * timestep,
+                step=step,
             )
             wandb.log(
                 {
                     "rigidity-loss-weight": rigidity_loss_weight,
                     "learning-rate": optimizer.param_groups[0]["lr"],
                 },
-                step=sequence_iteration * timestep,
+                step=step,
             )
             (
                 encoded_normalized_previous_means_and_rotations,
@@ -748,7 +743,7 @@ def train(config: Config):
 
             wandb.log(
                 {"gradient-norm": calculate_gradient_norm(deformation_network)},
-                step=sequence_iteration * timestep,
+                step=step,
             )
 
             optimizer.step()
