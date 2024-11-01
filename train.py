@@ -532,7 +532,7 @@ def inference(
     )
     frames = defaultdict(list)
     for timestep in tqdm(
-        range(1, timestep_count + 1), unit="timestep", desc="Inference"
+        range(1, timestep_count + 1), unit="timesteps", desc="Inference"
     ):
         updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
             deformation_network=deformation_network,
@@ -698,7 +698,7 @@ def train(config: Config):
             initial_neighbor_indices=initial_neighbor_info.indices,
         )
         for timestep in tqdm(
-            range(1, timestep_count + 1), unit="timestep", leave=False
+            range(1, timestep_count + 1), unit="timesteps", leave=False
         ):
             step = sequence_iteration * timestep_count + timestep
             updated_gaussian_cloud_parameters = update_gaussian_cloud_parameters(
