@@ -806,8 +806,6 @@ def calculate_gradient_norm(deformation_network):
     )
 
 
-
-
 def main():
     argument_parser = argparse.ArgumentParser(prog="Animating Gaussian Splats")
     argument_parser.add_argument("sequence_name", metavar="sequence-name", type=str)
