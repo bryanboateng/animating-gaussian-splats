@@ -782,6 +782,10 @@ def compute_encoded_normalized_means_and_rotations_and_foreground_info(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     initial_neighbor_indices: torch.Tensor,
 ):
+    for name in gaussian_cloud_parameters.keys():
+        parameter = gaussian_cloud_parameters[name].detach().clone()
+        parameter.requires_grad = False
+        gaussian_cloud_parameters[name] = parameter
     encoded_normalized_means_and_rotations = normalize_and_encode_means_and_rotations(
         gaussian_cloud_parameters
     )
