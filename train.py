@@ -445,7 +445,7 @@ def export_deformation_network(
     network_state_dict_path = network_directory_path / "state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
     wandb.save(
-        network_directory_path / "*/**",
+        network_directory_path / "*",
         base_path=network_directory_path.parent,
     )
 
@@ -505,10 +505,7 @@ def render_and_save_frame(
         .transpose(1, 2, 0)
     )
     frames_directory.mkdir(parents=True, exist_ok=True)
-    imageio.imwrite(
-        frames_directory / f"frame_{timestep:04d}.png",
-        frame,
-    )
+    imageio.imwrite(frames_directory / f"frame_{timestep:04d}.png", frame)
     return frame
 
 
@@ -576,6 +573,7 @@ def inference(
         )
     visualizations_directory_path.mkdir(parents=True, exist_ok=True)
     for name, (extrinsic_matrix, aspect_ratio) in extrinsic_matrices.items():
+        frames_directory_path = visualizations_directory_path / f"{name}_frames"
         frames[name].insert(
             0,
             render_and_save_frame(
@@ -583,28 +581,19 @@ def inference(
                 timestep=0,
                 aspect_ratio=aspect_ratio,
                 extrinsic_matrix=extrinsic_matrix,
-                frames_directory=visualizations_directory_path / f"{name}_frames",
+                frames_directory=frames_directory_path,
             ),
         )
-        imageio.mimwrite(
-            visualizations_directory_path / f"{name}.mp4",
-            frames[name],
-            fps=fps,
-        )
-        wandb.log( 
+        wandb.save(frames_directory_path / "*", base_path=frames_directory_path.parent)
+        video_file_path = visualizations_directory_path / f"{name}.mp4"
+        imageio.mimwrite(video_file_path, frames[name], fps=fps)
+        wandb.log(
             {
-                f"video/{name}": wandb.Video(
-                    data_or_path=str(visualizations_directory_path / f"{name}.mp4"),
-                    fps=fps,
-                    format="mp4",
+                f"visualization/{name}": wandb.Video(
+                    data_or_path=str(video_file_path), fps=fps, format="mp4"
                 )
             }
         )
-
-    wandb.save(
-        visualizations_directory_path / "*/**",
-        base_path=visualizations_directory_path.parent,
-    )
 
 
 def create_extrinsic_matrices():
