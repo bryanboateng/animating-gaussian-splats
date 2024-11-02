@@ -569,7 +569,7 @@ def inference(
     extrinsic_matrices = create_extrinsic_matrices()
     visualizations_directory_path = run_output_directory_path / "visualizations"
     visualizations_directory_path.mkdir(parents=True, exist_ok=True)
-    frames_directory_path = run_output_directory_path / "frames"
+    frames_directory_path = visualizations_directory_path / "frames"
     frames_directory_path.mkdir(parents=True, exist_ok=True)
     for name in extrinsic_matrices.keys():
         (frames_directory_path / name).mkdir(parents=True, exist_ok=True)
