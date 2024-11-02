@@ -632,7 +632,7 @@ def inference(
         wandb.log(
             {
                 f"visualization/{name}": wandb.Video(
-                    data_or_path=str(video_file_path), fps=fps, format="mp4"
+                    data_or_path=str(video_file_path), format="mp4"
                 )
             }
         )
