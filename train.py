@@ -504,12 +504,12 @@ def create_extrinsic_matrices():
     }
 
 
-def render_and_save_frame(
+def render_and_export_frame(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     timestep: int,
     aspect_ratio: float,
     extrinsic_matrix: np.array,
-    frames_directory: Path,
+    directory: Path,
 ):
     image_width = 1280
     image_height = 720
@@ -544,8 +544,7 @@ def render_and_save_frame(
         .astype(np.uint8)
         .transpose(1, 2, 0)
     )
-    frames_directory.mkdir(parents=True, exist_ok=True)
-    imageio.imwrite(frames_directory / f"frame_{timestep:04d}.png", frame)
+    imageio.imwrite(directory / f"{timestep:06d}.png", frame)
     return frame
 
 
@@ -567,9 +566,10 @@ def inference(
         normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
     )
     extrinsic_matrices = create_extrinsic_matrices()
-    visualizations_directory_path = (
-        run_output_directory_path / f"{wandb.run.name}_visualizations"
-    )
+    visualizations_directory_path = run_output_directory_path / "visualizations"
+    visualizations_directory_path.mkdir(parents=True, exist_ok=True)
+    frames_directory_path = run_output_directory_path / "frames"
+    frames_directory_path.mkdir(parents=True, exist_ok=True)
     frames = defaultdict(list)
     for timestep in tqdm(
         range(1, timestep_count + 1), unit="timesteps", desc="Inference"
@@ -585,12 +585,12 @@ def inference(
 
         for name, (extrinsic_matrix, aspect_ratio) in extrinsic_matrices.items():
             frames[name].append(
-                render_and_save_frame(
+                render_and_export_frame(
                     gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                     timestep=timestep,
                     aspect_ratio=aspect_ratio,
                     extrinsic_matrix=extrinsic_matrix,
-                    frames_directory=visualizations_directory_path / f"{name}_frames",
+                    directory=frames_directory_path / name,
                 )
             )
 
@@ -613,21 +613,16 @@ def inference(
         encoded_normalized_previous_means_and_rotations = (
             normalize_and_encode_means_and_rotations(updated_gaussian_cloud_parameters)
         )
-    visualizations_directory_path.mkdir(parents=True, exist_ok=True)
     for name, (extrinsic_matrix, aspect_ratio) in extrinsic_matrices.items():
-        frames_directory_path = visualizations_directory_path / f"{name}_frames"
         frames[name].insert(
             0,
-            render_and_save_frame(
+            render_and_export_frame(
                 gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 timestep=0,
                 aspect_ratio=aspect_ratio,
                 extrinsic_matrix=extrinsic_matrix,
-                frames_directory=frames_directory_path,
+                directory=frames_directory_path / name,
             ),
-        )
-        wandb.save(
-            frames_directory_path / "*", base_path=frames_directory_path.parent.parent
         )
         video_file_path = visualizations_directory_path / f"{name}.mp4"
         imageio.mimwrite(video_file_path, frames[name], fps=fps)
@@ -640,14 +635,12 @@ def inference(
         )
 
 
-def export_config(config: Config):
+def export_config(config: Config, run_output_directory_path: Path):
     config_dict = asdict(config)
     config_dict["data_directory_path"] = str(config_dict["data_directory_path"])
     config_dict["output_directory_path"] = str(config_dict["output_directory_path"])
-    config_file_path = config.output_directory_path / f"{wandb.run.name}_config.json"
-    with config_file_path.open("w") as config_file:
+    with (run_output_directory_path / "config.json").open("w") as config_file:
         json.dump(config_dict, config_file, indent="\t")
-    wandb.save(config_file_path)
 
 
 def export_deformation_network(
@@ -659,9 +652,7 @@ def export_deformation_network(
     residual_block_count: int,
     hidden_dimension: int,
 ):
-    network_directory_path = (
-        run_output_directory_path / f"{wandb.run.name}_deformation_network"
-    )
+    network_directory_path = run_output_directory_path / "deformation_network"
     network_directory_path.mkdir(parents=True, exist_ok=True)
     shutil.copy(
         src=data_directory_path
@@ -684,10 +675,12 @@ def export_deformation_network(
 
     network_state_dict_path = network_directory_path / "state_dict.pth"
     torch.save(deformation_network.state_dict(), network_state_dict_path)
-    wandb.save(
-        network_directory_path / "*",
-        base_path=network_directory_path.parent,
-    )
+
+
+def export_files_to_wandb(root_directory_path: Path):
+    for path in root_directory_path.rglob("*"):
+        if path.is_file():
+            wandb.save(path, base_path=root_directory_path)
 
 
 def train(config: Config):
@@ -802,6 +795,7 @@ def train(config: Config):
         run_output_directory_path = (
             config.output_directory_path / f"{config.sequence_name}_{wandb.run.name}"
         )
+        run_output_directory_path.mkdir(parents=True, exist_ok=True)
         inference(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
@@ -813,7 +807,9 @@ def train(config: Config):
             run_output_directory_path=run_output_directory_path,
             fps=config.fps,
         )
-        export_config(config=config)
+        export_config(
+            config=config, run_output_directory_path=run_output_directory_path
+        )
         export_deformation_network(
             run_output_directory_path=run_output_directory_path,
             sequence_name=config.sequence_name,
@@ -823,6 +819,7 @@ def train(config: Config):
             residual_block_count=config.residual_block_count,
             hidden_dimension=config.hidden_dimension,
         )
+        export_files_to_wandb(root_directory_path=run_output_directory_path)
 
 
 def main():
