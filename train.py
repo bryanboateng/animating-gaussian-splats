@@ -859,6 +859,7 @@ def main():
         fps=args.fps,
         output_directory_path=args.output_directory_path,
     )
+    print(config)
     train(config=config)
 
 
