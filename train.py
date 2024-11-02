@@ -794,7 +794,7 @@ def train(config: Config):
 
     with torch.no_grad():
         run_output_directory_path = (
-            config.output_directory_path / f"{config.sequence_name}_{wandb.run.name}"
+            config.output_directory_path / config.sequence_name / wandb.run.name
         )
         run_output_directory_path.mkdir(parents=True, exist_ok=True)
         inference(
