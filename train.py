@@ -111,18 +111,20 @@ class DeformationNetwork(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, L):
+    def __init__(self, frequency_count: int):
         super(PositionalEncoding, self).__init__()
-        self.L = L
-        self.consts = ((torch.ones(L) * 2).pow(torch.arange(L)) * torch.pi).cuda()
+        self.frequency_factors = (
+            (torch.ones(frequency_count) * 2).pow(torch.arange(frequency_count))
+            * torch.pi
+        ).cuda()
 
-    def forward(self, x):
-        x = x[:, :, None]
-        A = (self.consts * x).repeat_interleave(2, 2)
-        A[:, :, ::2] = torch.sin(A[:, :, ::2])
-        A[:, :, 1::2] = torch.cos(A[:, :, ::2])
+    def forward(self, x: torch.Tensor):
+        x_expanded = x[:, :, None]
+        embeddings = (self.frequency_factors * x_expanded).repeat_interleave(2, 2)
+        embeddings[:, :, ::2] = torch.sin(embeddings[:, :, ::2])
+        embeddings[:, :, 1::2] = torch.cos(embeddings[:, :, ::2])
 
-        return A.permute(0, 2, 1).flatten(start_dim=1)
+        return embeddings.permute(0, 2, 1).flatten(start_dim=1)
 
 
 def get_timestep_count(dataset_metadata, timestep_count_limit: Optional[int]):
@@ -195,8 +197,8 @@ def normalize_and_encode_means_and_rotations(
     ) - 1.0
     return torch.cat(
         (
-            PositionalEncoding(L=10)(normalized_means),
-            PositionalEncoding(L=4)(normalized_rotations),
+            PositionalEncoding(frequency_count=10)(normalized_means),
+            PositionalEncoding(frequency_count=4)(normalized_rotations),
         ),
         dim=1,
     )
@@ -254,7 +256,7 @@ def update_gaussian_cloud_parameters(
     timestep: int,
     timestep_count: int,
 ):
-    encoded_progress = PositionalEncoding(L=4)(
+    encoded_progress = PositionalEncoding(frequency_count=4)(
         torch.tensor(timestep / timestep_count)
         .view(1, 1)
         .repeat(encoded_normalized_initial_means_and_rotations.shape[0], 1)
