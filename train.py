@@ -7,6 +7,7 @@ import shutil
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from pprint import pprint
 from typing import Optional
 
 import imageio
@@ -859,7 +860,7 @@ def main():
         fps=args.fps,
         output_directory_path=args.output_directory_path,
     )
-    print(config)
+    pprint(config)
     train(config=config)
 
 
