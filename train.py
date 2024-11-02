@@ -248,6 +248,24 @@ def create_foreground_info(
     )
 
 
+def compute_encoded_normalized_means_and_rotations_and_foreground_info(
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    initial_neighbor_indices: torch.Tensor,
+):
+    for name in gaussian_cloud_parameters.keys():
+        parameter = gaussian_cloud_parameters[name].detach().clone()
+        parameter.requires_grad = False
+        gaussian_cloud_parameters[name] = parameter
+    encoded_normalized_means_and_rotations = normalize_and_encode_means_and_rotations(
+        gaussian_cloud_parameters
+    )
+    foreground_info = create_foreground_info(
+        gaussian_cloud_parameters=gaussian_cloud_parameters,
+        initial_neighbor_indices=initial_neighbor_indices,
+    )
+    return encoded_normalized_means_and_rotations, foreground_info
+
+
 def update_gaussian_cloud_parameters(
     deformation_network: DeformationNetwork,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
@@ -412,43 +430,17 @@ def calculate_loss(
     return total_loss
 
 
-def export_deformation_network(
-    run_output_directory_path: Path,
-    sequence_name: str,
-    data_directory_path: Path,
-    deformation_network: DeformationNetwork,
-    timestep_count: int,
-    residual_block_count: int,
-    hidden_dimension: int,
-):
-    network_directory_path = (
-        run_output_directory_path / f"{wandb.run.name}_deformation_network"
-    )
-    network_directory_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(
-        src=data_directory_path
-        / sequence_name
-        / "densified_initial_gaussian_cloud_parameters.pth",
-        dst=network_directory_path / "densified_initial_gaussian_cloud_parameters.pth",
-    )
-
-    config_file_path = network_directory_path / "config.json"
-    with config_file_path.open("w") as config_file:
-        json.dump(
-            {
-                "timestep_count": timestep_count,
-                "residual_block_count": residual_block_count,
-                "hidden_dimension": hidden_dimension,
-            },
-            config_file,
-            indent="\t",
+def calculate_gradient_norm(deformation_network):
+    return torch.sqrt(
+        torch.sum(
+            torch.tensor(
+                [
+                    parameter.grad.norm(2).pow(2)
+                    for parameter in deformation_network.parameters()
+                    if parameter.grad is not None
+                ]
+            )
         )
-
-    network_state_dict_path = network_directory_path / "state_dict.pth"
-    torch.save(deformation_network.state_dict(), network_state_dict_path)
-    wandb.save(
-        network_directory_path / "*",
-        base_path=network_directory_path.parent,
     )
 
 
@@ -464,6 +456,52 @@ def create_transformation_matrix(
             [0.0, 0.0, 0.0, 1.0],
         ]
     )
+
+
+def create_extrinsic_matrices():
+    distance_to_center: float = 2.4
+    height: float = 1.3
+    return {
+        "000": (
+            create_transformation_matrix(
+                yaw_degrees=0, height=height, distance_to_center=distance_to_center
+            ),
+            0.82,
+        ),
+        "090": (
+            create_transformation_matrix(
+                yaw_degrees=90, height=height, distance_to_center=distance_to_center
+            ),
+            0.52,
+        ),
+        "180": (
+            create_transformation_matrix(
+                yaw_degrees=180,
+                height=height,
+                distance_to_center=distance_to_center,
+            ),
+            0.52,
+        ),
+        "270": (
+            create_transformation_matrix(
+                yaw_degrees=270,
+                height=height,
+                distance_to_center=distance_to_center,
+            ),
+            0.52,
+        ),
+        "top": (
+            np.array(
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, -1.0, 0.0],
+                    [0.0, 1.0, 0.0, 4.5],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+            ),
+            0.35,
+        ),
+    }
 
 
 def render_and_save_frame(
@@ -602,50 +640,54 @@ def inference(
         )
 
 
-def create_extrinsic_matrices():
-    distance_to_center: float = 2.4
-    height: float = 1.3
-    return {
-        "000": (
-            create_transformation_matrix(
-                yaw_degrees=0, height=height, distance_to_center=distance_to_center
-            ),
-            0.82,
-        ),
-        "090": (
-            create_transformation_matrix(
-                yaw_degrees=90, height=height, distance_to_center=distance_to_center
-            ),
-            0.52,
-        ),
-        "180": (
-            create_transformation_matrix(
-                yaw_degrees=180,
-                height=height,
-                distance_to_center=distance_to_center,
-            ),
-            0.52,
-        ),
-        "270": (
-            create_transformation_matrix(
-                yaw_degrees=270,
-                height=height,
-                distance_to_center=distance_to_center,
-            ),
-            0.52,
-        ),
-        "top": (
-            np.array(
-                [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 0.0, -1.0, 0.0],
-                    [0.0, 1.0, 0.0, 4.5],
-                    [0.0, 0.0, 0.0, 1.0],
-                ]
-            ),
-            0.35,
-        ),
-    }
+def export_config(config: Config):
+    config_dict = asdict(config)
+    config_dict["data_directory_path"] = str(config_dict["data_directory_path"])
+    config_dict["output_directory_path"] = str(config_dict["output_directory_path"])
+    config_file_path = config.output_directory_path / f"{wandb.run.name}_config.json"
+    with config_file_path.open("w") as config_file:
+        json.dump(config_dict, config_file, indent="\t")
+    wandb.save(config_file_path)
+
+
+def export_deformation_network(
+    run_output_directory_path: Path,
+    sequence_name: str,
+    data_directory_path: Path,
+    deformation_network: DeformationNetwork,
+    timestep_count: int,
+    residual_block_count: int,
+    hidden_dimension: int,
+):
+    network_directory_path = (
+        run_output_directory_path / f"{wandb.run.name}_deformation_network"
+    )
+    network_directory_path.mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        src=data_directory_path
+        / sequence_name
+        / "densified_initial_gaussian_cloud_parameters.pth",
+        dst=network_directory_path / "densified_initial_gaussian_cloud_parameters.pth",
+    )
+
+    config_file_path = network_directory_path / "config.json"
+    with config_file_path.open("w") as config_file:
+        json.dump(
+            {
+                "timestep_count": timestep_count,
+                "residual_block_count": residual_block_count,
+                "hidden_dimension": hidden_dimension,
+            },
+            config_file,
+            indent="\t",
+        )
+
+    network_state_dict_path = network_directory_path / "state_dict.pth"
+    torch.save(deformation_network.state_dict(), network_state_dict_path)
+    wandb.save(
+        network_directory_path / "*",
+        base_path=network_directory_path.parent,
+    )
 
 
 def train(config: Config):
@@ -771,11 +813,7 @@ def train(config: Config):
             run_output_directory_path=run_output_directory_path,
             fps=config.fps,
         )
-        config_dict = asdict(config)
-        config_dict["data_directory_path"] = str(config_dict["data_directory_path"])
-        config_dict["output_directory_path"] = str(config_dict["output_directory_path"])
-        with (config.output_directory_path / "config.json").open("w") as config_file:
-            json.dump(config_dict, config_file, indent="\t")
+        export_config(config=config)
         export_deformation_network(
             run_output_directory_path=run_output_directory_path,
             sequence_name=config.sequence_name,
@@ -785,38 +823,6 @@ def train(config: Config):
             residual_block_count=config.residual_block_count,
             hidden_dimension=config.hidden_dimension,
         )
-
-
-def compute_encoded_normalized_means_and_rotations_and_foreground_info(
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
-    initial_neighbor_indices: torch.Tensor,
-):
-    for name in gaussian_cloud_parameters.keys():
-        parameter = gaussian_cloud_parameters[name].detach().clone()
-        parameter.requires_grad = False
-        gaussian_cloud_parameters[name] = parameter
-    encoded_normalized_means_and_rotations = normalize_and_encode_means_and_rotations(
-        gaussian_cloud_parameters
-    )
-    foreground_info = create_foreground_info(
-        gaussian_cloud_parameters=gaussian_cloud_parameters,
-        initial_neighbor_indices=initial_neighbor_indices,
-    )
-    return encoded_normalized_means_and_rotations, foreground_info
-
-
-def calculate_gradient_norm(deformation_network):
-    return torch.sqrt(
-        torch.sum(
-            torch.tensor(
-                [
-                    parameter.grad.norm(2).pow(2)
-                    for parameter in deformation_network.parameters()
-                    if parameter.grad is not None
-                ]
-            )
-        )
-    )
 
 
 def main():
