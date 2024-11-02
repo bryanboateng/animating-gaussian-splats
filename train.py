@@ -683,7 +683,7 @@ def export_deformation_network(
 def export_files_to_wandb(root_directory_path: Path):
     for path in root_directory_path.rglob("*"):
         if path.is_file():
-            wandb.save(path, base_path=root_directory_path)
+            wandb.save(path, base_path=root_directory_path.parent)
 
 
 def train(config: Config):
