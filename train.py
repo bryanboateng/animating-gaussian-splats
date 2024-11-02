@@ -35,9 +35,9 @@ class Config:
     total_iteration_count: int
     warmup_iteration_count: int
     learning_rate: float
-    timestep_count_limit: Optional[int]
     hidden_dimension: int
     residual_block_count: int
+    timestep_count_limit: Optional[int]
     fps: int
     output_directory_path: Path
 
@@ -832,9 +832,13 @@ def main():
         "warmup_iteration_count", metavar="warmup-iteration-count", type=int
     )
     argument_parser.add_argument("learning_rate", metavar="learning-rate", type=float)
+    argument_parser.add_argument(
+        "hidden_dimension", metavar="hidden-dimension", type=int
+    )
+    argument_parser.add_argument(
+        "residual_block_count", metavar="residual-block-count", type=int
+    )
     argument_parser.add_argument("-t", "--timestep-count-limit", type=int)
-    argument_parser.add_argument("-hd", "--hidden-dimension", type=int, default=128)
-    argument_parser.add_argument("-r", "--residual-block-count", type=int, default=6)
     argument_parser.add_argument("-fps", type=int, default=30)
     argument_parser.add_argument(
         "-o", "--output-directory-path", type=Path, default=Path("./out")
@@ -846,9 +850,9 @@ def main():
         total_iteration_count=args.total_iteration_count,
         warmup_iteration_count=args.warmup_iteration_count,
         learning_rate=args.learning_rate,
-        timestep_count_limit=args.timestep_count_limit,
         hidden_dimension=args.hidden_dimension,
         residual_block_count=args.residual_block_count,
+        timestep_count_limit=args.timestep_count_limit,
         fps=args.fps,
         output_directory_path=args.output_directory_path,
     )
