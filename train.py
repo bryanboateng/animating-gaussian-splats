@@ -1,7 +1,6 @@
 import argparse
 import copy
 import json
-import math
 import random
 import shutil
 from collections import defaultdict
@@ -398,7 +397,6 @@ def calculate_loss(
     target_views: list[View],
     initial_neighbor_info: NeighborInfo,
     previous_timestep_foreground_info: ForegroundInfo,
-    rigidity_loss_weight,
     step: int,
 ):
     losses = torch.stack(
@@ -417,7 +415,7 @@ def calculate_loss(
     ssim_loss_sum = summed_losses[1]
     rigidity_loss_sum = summed_losses[2]
     image_loss = combine_l1_and_ssim_loss(l1_loss=l1_loss_sum, ssim_loss=ssim_loss_sum)
-    total_loss = image_loss + 3 * rigidity_loss_weight * summed_losses[2]
+    total_loss = image_loss + 3 * summed_losses[2]
     wandb.log(
         {
             "train-loss/total": total_loss.item(),
@@ -750,31 +748,14 @@ def train(config: Config):
                 timestep_count=timestep_count,
             )
 
-            rigidity_loss_weight = (
-                2.0
-                / (
-                    1.0
-                    + math.exp(
-                        -6 * (step / (config.total_iteration_count * timestep_count))
-                    )
-                )
-                - 1
-            )
             loss = calculate_loss(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
                 target_views=random.sample(views[timestep - 1], 5),
                 initial_neighbor_info=initial_neighbor_info,
                 previous_timestep_foreground_info=previous_timestep_foreground_info,
-                rigidity_loss_weight=rigidity_loss_weight,
                 step=step,
             )
-            wandb.log(
-                {
-                    "rigidity-loss-weight": rigidity_loss_weight,
-                    "learning-rate": optimizer.param_groups[0]["lr"],
-                },
-                step=step,
-            )
+            wandb.log({"learning-rate": optimizer.param_groups[0]["lr"]}, step=step)
             (
                 encoded_normalized_previous_means_and_rotations,
                 previous_timestep_foreground_info,
