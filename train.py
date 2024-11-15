@@ -765,7 +765,7 @@ def train(config: Config):
             )
 
             loss.backward()
-            nn.utils.clip_grad_norm(deformation_network.parameters(), max_norm=1.0)
+            nn.utils.clip_grad_norm_(deformation_network.parameters(), max_norm=1.0)
 
             wandb.log(
                 {"gradient-norm": calculate_gradient_norm(deformation_network)},
