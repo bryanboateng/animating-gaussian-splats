@@ -43,6 +43,14 @@ class Config:
 
 
 @dataclass
+class GaussianCloudParameterRanges:
+    means_min: torch.Tensor
+    means_max: torch.Tensor
+    rotations_min: torch.Tensor
+    rotations_max: torch.Tensor
+
+
+@dataclass
 class NeighborInfo:
     weights: torch.Tensor
     indices: torch.Tensor
@@ -182,19 +190,31 @@ def create_neighbor_info(gaussian_cloud_parameters: dict[str, torch.nn.Parameter
     )
 
 
+def map_range_to_minus1_and_1(
+    values: torch.nn.Parameter, range_min: torch.Tensor, range_max: torch.Tensor
+):
+    scale = (values - range_min) / (range_max - range_min)
+    destination_min = -1
+    destination_max = 1
+    return (destination_max - destination_min) * scale + destination_min
+
+
 def normalize_and_encode_means_and_rotations(
-    gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
+    gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    initial_ranges: GaussianCloudParameterRanges,
 ):
     means = gaussian_cloud_parameters["means"]
     rotations = gaussian_cloud_parameters["rotation_quaternions"]
-    normalized_means = means - means.min(dim=0).values
-    normalized_means = (
-        2.0 * normalized_means / normalized_means.max(dim=0).values
-    ) - 1.0
-    normalized_rotations = rotations - rotations.min(dim=0).values
-    normalized_rotations = (
-        2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
-    ) - 1.0
+    normalized_means = map_range_to_minus1_and_1(
+        values=means,
+        range_min=initial_ranges.means_min,
+        range_max=initial_ranges.means_max,
+    )
+    normalized_rotations = map_range_to_minus1_and_1(
+        values=rotations,
+        range_min=initial_ranges.rotations_min,
+        range_max=initial_ranges.rotations_max,
+    )
     return torch.cat(
         (
             PositionalEncoding(frequency_count=10)(normalized_means),
@@ -250,6 +270,7 @@ def create_foreground_info(
 
 def compute_encoded_normalized_means_and_rotations_and_foreground_info(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    initial_ranges: GaussianCloudParameterRanges,
     initial_neighbor_indices: torch.Tensor,
 ):
     for name in gaussian_cloud_parameters.keys():
@@ -257,7 +278,8 @@ def compute_encoded_normalized_means_and_rotations_and_foreground_info(
         parameter.requires_grad = False
         gaussian_cloud_parameters[name] = parameter
     encoded_normalized_means_and_rotations = normalize_and_encode_means_and_rotations(
-        gaussian_cloud_parameters
+        gaussian_cloud_parameters=gaussian_cloud_parameters,
+        initial_ranges=initial_ranges,
     )
     foreground_info = create_foreground_info(
         gaussian_cloud_parameters=gaussian_cloud_parameters,
@@ -550,6 +572,7 @@ def render_and_export_frame(
 def inference(
     deformation_network: DeformationNetwork,
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
+    initial_ranges: GaussianCloudParameterRanges,
     timestep_count: int,
     total_iteration_count: int,
     dataset_metadata,
@@ -559,10 +582,16 @@ def inference(
     fps: int,
 ):
     encoded_normalized_initial_means_and_rotations = (
-        normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
+        normalize_and_encode_means_and_rotations(
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            initial_ranges=initial_ranges,
+        )
     )
     encoded_normalized_previous_means_and_rotations = (
-        normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
+        normalize_and_encode_means_and_rotations(
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            initial_ranges=initial_ranges,
+        )
     )
     extrinsic_matrices = create_extrinsic_matrices()
     visualizations_directory_path = run_output_directory_path / "visualizations"
@@ -612,7 +641,10 @@ def inference(
             step=total_iteration_count * timestep_count + timestep,
         )
         encoded_normalized_previous_means_and_rotations = (
-            normalize_and_encode_means_and_rotations(updated_gaussian_cloud_parameters)
+            normalize_and_encode_means_and_rotations(
+                gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                initial_ranges=initial_ranges,
+            )
         )
     for name, (extrinsic_matrix, aspect_ratio) in extrinsic_matrices.items():
         frames[name].insert(
@@ -717,8 +749,21 @@ def train(config: Config):
     initial_neighbor_info = create_neighbor_info(
         gaussian_cloud_parameters=initial_gaussian_cloud_parameters
     )
+
+    initial_means = initial_gaussian_cloud_parameters["means"]
+    initial_rotations = initial_gaussian_cloud_parameters["rotation_quaternions"]
+    initial_ranges = GaussianCloudParameterRanges(
+        means_min=initial_means.min(dim=0).values,
+        means_max=initial_means.max(dim=0).values,
+        rotations_min=initial_rotations.min(dim=0).values,
+        rotations_max=initial_rotations.max(dim=0).values,
+    )
+
     encoded_normalized_initial_means_and_rotations = (
-        normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
+        normalize_and_encode_means_and_rotations(
+            gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            initial_ranges=initial_ranges,
+        )
     )
     views = load_all_views(
         dataset_metadata=dataset_metadata,
@@ -733,6 +778,7 @@ def train(config: Config):
             previous_timestep_foreground_info,
         ) = compute_encoded_normalized_means_and_rotations_and_foreground_info(
             gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            initial_ranges=initial_ranges,
             initial_neighbor_indices=initial_neighbor_info.indices,
         )
         for timestep in tqdm(
@@ -761,6 +807,7 @@ def train(config: Config):
                 previous_timestep_foreground_info,
             ) = compute_encoded_normalized_means_and_rotations_and_foreground_info(
                 gaussian_cloud_parameters=updated_gaussian_cloud_parameters,
+                initial_ranges=initial_ranges,
                 initial_neighbor_indices=initial_neighbor_info.indices,
             )
 
@@ -784,6 +831,7 @@ def train(config: Config):
         inference(
             deformation_network=deformation_network,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
+            initial_ranges=initial_ranges,
             timestep_count=timestep_count,
             total_iteration_count=config.total_iteration_count,
             dataset_metadata=dataset_metadata,
