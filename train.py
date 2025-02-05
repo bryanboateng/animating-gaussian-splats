@@ -167,7 +167,7 @@ def initialize_variables(gaussian_cloud_parameters: dict[str, torch.nn.Parameter
     return neighbor_info, previous_timestep_foreground_info
 
 
-def encode_means_and_rotations(
+def normalize_and_encode_means_and_rotations(
     gaussian_cloud_parameters: dict[str, torch.nn.Parameter]
 ):
     means = gaussian_cloud_parameters["means"]
@@ -180,14 +180,9 @@ def encode_means_and_rotations(
     normalized_rotations = (
         2.0 * normalized_rotations / normalized_rotations.max(dim=0).values
     ) - 1.0
-    large_positional_encoding = PositionalEncoding(L=10)
-    small_positional_encoding = PositionalEncoding(L=4)
-    encoded_normalized_means = large_positional_encoding(normalized_means)
-    encoded_normalized_rotations = small_positional_encoding(normalized_rotations)
     return (
-        encoded_normalized_means,
-        encoded_normalized_rotations,
-        small_positional_encoding,
+        PositionalEncoding(L=10)(normalized_means),
+        PositionalEncoding(L=4)(normalized_rotations),
     )
 
 
@@ -243,11 +238,10 @@ def update_gaussian_cloud_parameters(
     initial_gaussian_cloud_parameters: dict[str, torch.nn.Parameter],
     encoded_normalized_initial_means,
     encoded_normalized_initial_rotations,
-    small_positional_encoding: PositionalEncoding,
     timestep,
     timestep_count,
 ):
-    encoded_timestep = small_positional_encoding(
+    encoded_timestep = PositionalEncoding(L=4)(
         torch.tensor(timestep / (timestep_count - 1))
         .view(1, 1)
         .repeat(encoded_normalized_initial_means.shape[0], 1)
@@ -464,7 +458,6 @@ def export_visualization(
     name: str,
     initial_gaussian_cloud_parameters,
     deformation_network: DeformationNetwork,
-    small_positional_encoding: PositionalEncoding,
     encoded_normalized_initial_means: torch.Tensor,
     encoded_normalized_initial_rotations: torch.Tensor,
     aspect_ratio: float,
@@ -485,7 +478,6 @@ def export_visualization(
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 encoded_normalized_initial_means=encoded_normalized_initial_means,
                 encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-                small_positional_encoding=small_positional_encoding,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
@@ -550,8 +542,7 @@ def export_visualizations(
     (
         encoded_normalized_initial_means,
         encoded_normalized_initial_rotations,
-        small_positional_encoding,
-    ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
+    ) = normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
 
     distance_to_center: float = 2.4
     height: float = 1.3
@@ -598,7 +589,6 @@ def export_visualizations(
             name=name,
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             deformation_network=deformation_network,
-            small_positional_encoding=small_positional_encoding,
             encoded_normalized_initial_means=encoded_normalized_initial_means,
             encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
             aspect_ratio=aspect_ratio,
@@ -648,8 +638,7 @@ def train(config: Config):
     (
         encoded_normalized_initial_means,
         encoded_normalized_initial_rotations,
-        small_positional_encoding,
-    ) = encode_means_and_rotations(initial_gaussian_cloud_parameters)
+    ) = normalize_and_encode_means_and_rotations(initial_gaussian_cloud_parameters)
     views = load_all_views(
         dataset_metadata=dataset_metadata,
         timestep_count=timestep_count,
@@ -670,7 +659,6 @@ def train(config: Config):
             initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
             encoded_normalized_initial_means=encoded_normalized_initial_means,
             encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-            small_positional_encoding=small_positional_encoding,
             timestep=timestep,
             timestep_count=timestep_count,
         )
@@ -730,7 +718,6 @@ def train(config: Config):
                 initial_gaussian_cloud_parameters=initial_gaussian_cloud_parameters,
                 encoded_normalized_initial_means=encoded_normalized_initial_means,
                 encoded_normalized_initial_rotations=encoded_normalized_initial_rotations,
-                small_positional_encoding=small_positional_encoding,
                 timestep=timestep,
                 timestep_count=timestep_count,
             )
